@@ -1,3 +1,4 @@
-from .db import ProcessedEmailStore
+"""Local SQLite persistence layer."""
+from .db import Database, get_db
 
-__all__ = ["ProcessedEmailStore"]
+__all__ = ["Database", "get_db"]

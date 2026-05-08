@@ -1,9 +1,26 @@
-google-api-python-client==2.149.0
-google-auth==2.35.0
-google-auth-oauthlib==1.2.1
-google-auth-httplib2==0.2.0
-gspread==6.1.4
-anthropic==0.39.0
-python-dotenv==1.0.1
-APScheduler==3.10.4
-tenacity==9.0.0
+# --- Core ---
+python-dotenv>=1.0.1
+
+# --- Google Gemini ---
+google-genai>=0.3.0
+
+# --- Google APIs (Gmail + Sheets) ---
+google-api-python-client>=2.149.0
+google-auth>=2.35.0
+google-auth-oauthlib>=1.2.1
+google-auth-httplib2>=0.2.0
+
+# --- Audio capture ---
+# Lower bounds chosen for Python 3.13 wheel availability.
+sounddevice>=0.5.0
+numpy>=2.1
+soundfile>=0.12.1
+
+# --- Speech-to-text ---
+faster-whisper>=1.0.3
+
+# --- Resilience ---
+tenacity>=9.0.0
+
+# --- Utilities ---
+python-dateutil>=2.9.0
