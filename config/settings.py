@@ -93,6 +93,10 @@ class Settings:
     # Daily summary
     daily_summary_hour: int
 
+    # OAuth account binding
+    expected_google_account: Optional[str]
+    oauth_chrome_profile: Optional[str]
+
     # OAuth scopes
     oauth_scopes: tuple = field(
         default=(
@@ -161,6 +165,8 @@ def _load() -> Settings:
         google_token_path=_resolve_path(_env("GOOGLE_TOKEN_PATH"), "./token.json"),
         log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
         daily_summary_hour=_env_int("DAILY_SUMMARY_HOUR", 21),
+        expected_google_account=_env("EXPECTED_GOOGLE_ACCOUNT"),
+        oauth_chrome_profile=_env("OAUTH_CHROME_PROFILE"),
     )
 
 
