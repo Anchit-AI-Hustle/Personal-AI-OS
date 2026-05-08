@@ -13,6 +13,11 @@ desktop.ini
 .env
 .env.*
 !.env.example
+credentials.json
+credentials.json.json
+token.json
+*.pem
+*.key
 
 # Node
 node_modules/
@@ -33,13 +38,13 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# Local data
+data/
+logs/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
 # Logs
 *.log
-
-# Project secrets / runtime
-token.json
-client_secret.json
-credentials.json
-credentials.json.json
-data/
-
