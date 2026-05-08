@@ -25,6 +25,7 @@ from .client import (
     get_sheets_client,
     source_tab_for,
 )
+from .excel_mirror import ExcelMirror, get_excel_mirror
 
 logger = get_logger(__name__)
 
@@ -70,6 +71,7 @@ class SheetsSyncWorker(threading.Thread):
         client: Optional[SheetsClient] = None,
         interval: int = SYNC_INTERVAL_SECONDS,
         batch_size: int = BATCH_SIZE,
+        excel_mirror: Optional[ExcelMirror] = None,
     ) -> None:
         super().__init__(name="SheetsSyncWorker", daemon=True)
         self._stop = stop_event
@@ -77,6 +79,7 @@ class SheetsSyncWorker(threading.Thread):
         self._interval = interval
         self._batch_size = batch_size
         self._db = get_db()
+        self._excel = excel_mirror or get_excel_mirror()
 
     def run(self) -> None:  # pragma: no cover
         logger.info("SheetsSyncWorker started (interval=%ss)", self._interval)
@@ -173,3 +176,15 @@ class SheetsSyncWorker(threading.Thread):
             all_tasks_starting_row=all_first_row,
             source_starting_row=source_first_row,
         )
+
+        # 4. Mirror to local Excel. Do this AFTER marking synced so a Google
+        # Sheets push success isn't blocked by an Excel write failure (e.g.
+        # the file is open in Excel locally). The mirror handles its own
+        # locking and only logs warnings on failure.
+        try:
+            self._excel.append_rows(tab, rows)
+            self._excel.append_rows(TAB_ALL_TASKS, rows)
+        except Exception:
+            logger.exception(
+                "Excel mirror append failed (Google Sheet IS up to date)."
+            )
