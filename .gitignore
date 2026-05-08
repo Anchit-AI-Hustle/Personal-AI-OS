@@ -48,3 +48,11 @@ logs/
 
 # Logs
 *.log
+
+# Project secrets / runtime
+token.json
+client_secret.json
+credentials.json
+credentials.json.json
+data/
+
