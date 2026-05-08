@@ -9,19 +9,65 @@ received, then shuts everything down cleanly.
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
-from config import settings  # noqa: F401  -- importing validates env vars
-from database import get_db
-from gmail import GmailPoller
-from meetings import MeetingPipeline
-from services import DailySummaryWorker, EmailService
-from sheets import SheetsSyncWorker
-from utils.logger import get_logger, setup_logging
+
+def _preflight() -> None:
+    """
+    Fail loudly with actionable advice BEFORE third-party imports run.
+    The most common pebble in this repo is running `python main.py` from
+    a fresh terminal that hasn't activated the venv — which causes a
+    ModuleNotFoundError on the very next line.
+    """
+    project_root = Path(__file__).resolve().parent
+    venv_python = project_root / ".venv" / "Scripts" / "python.exe"
+    current_python = Path(sys.executable).resolve()
+
+    # Heuristic: if a project-local .venv exists but we're not running its
+    # interpreter, the user almost certainly forgot to activate it.
+    if venv_python.exists() and current_python != venv_python.resolve():
+        # Try to import a representative third-party dep. If it works, we
+        # assume the current interpreter has its own copy and let it
+        # through — no need to nag.
+        try:
+            import tenacity  # noqa: F401
+            return
+        except ImportError:
+            print(
+                "\n"
+                "================================================================\n"
+                "  Personal AI OS: virtualenv not activated.\n"
+                "================================================================\n"
+                f"  Running with : {current_python}\n"
+                f"  Expected     : {venv_python}\n"
+                "\n"
+                "  Fix it from this PowerShell session:\n"
+                "      .\\.venv\\Scripts\\Activate.ps1\n"
+                "      python main.py\n"
+                "\n"
+                "  ...or just run the venv python directly:\n"
+                "      .\\.venv\\Scripts\\python.exe main.py\n"
+                "================================================================\n",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+
+_preflight()
+
+from config import settings  # noqa: E402,F401  -- importing validates env vars
+from database import get_db  # noqa: E402
+from gmail import GmailPoller  # noqa: E402
+from meetings import MeetingPipeline  # noqa: E402
+from services import DailySummaryWorker, EmailService  # noqa: E402
+from sheets import SheetsSyncWorker  # noqa: E402
+from utils.logger import get_logger, setup_logging  # noqa: E402
 
 setup_logging()
 logger = get_logger("main")
