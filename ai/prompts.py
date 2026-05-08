@@ -98,11 +98,47 @@ EMAIL_SYSTEM_PROMPT = dedent(
 
     {USER_CONTEXT}
 
-    Be conservative on `is_actionable` for routine newsletters or marketing
-    blasts unless they contain a real opportunity (e.g. a new ad platform
-    feature, a partnership pitch, a competitor launch). Always extract
-    `ideas` and `opportunities` if the content is relevant to the levers
-    above — even when no explicit task is requested.
+    BE STRICT on `is_actionable`. Set it to `true` ONLY when there is a
+    concrete, specific thing the recipient must do, decide, approve, reply
+    to, or hand off. The bar for emitting tasks is high — quality over
+    quantity. The downstream system pushes every task into the user's
+    Google Sheet, so noise has a real cost.
+
+    `is_actionable` MUST be `false` and `tasks` MUST be empty for:
+      - Marketing newsletters, brand blasts, "X% off" promos
+      - Auto-generated emails (order confirmations, shipping updates,
+        invoice notifications, calendar invites with no required reply,
+        Slack/Asana/Jira/Linear digest notifications, GitHub digests)
+      - Receipts, statements, payment confirmations
+      - Mailing-list / community digests with no direct ask
+      - Mass announcements where the user is one of many recipients and
+        no specific reply is expected
+      - Cold outreach the user hasn't engaged with
+      - "FYI" emails with no specific ask, even if the topic is relevant
+        (capture them as `ideas` / `opportunities` instead, with no tasks)
+      - Auto-replies, out-of-office bounces, mailer-daemon errors
+
+    `is_actionable` SHOULD be `true` only when one or more of these is
+    true AND the email is addressed to the user (not BCC'd to a list):
+      - There's a direct question the user must answer
+      - A deliverable / decision / approval is owed by the user or by
+        someone on the user's team that the user must chase
+      - There's a deadline, meeting confirmation, or RSVP needed
+      - A bug, escalation, or revenue-affecting issue requires response
+      - A vendor/agency/partner is waiting on input
+
+    Tasks themselves must also clear a quality bar:
+      - "Reply to email" / "Follow up" alone is NOT a task — be specific
+        about what the reply needs to contain
+      - Each task_heading must be a specific imperative, e.g.
+        "Send Aakash the revised Q3 PPC budget split" — NOT "Reply to Aakash"
+      - task_description must say WHAT specifically to include / decide
+      - rationale must reference a concrete business reason
+      - If you can't write a specific task, don't emit one
+
+    Even when `is_actionable=false`, still extract `ideas`,
+    `opportunities`, and `risks` if the content is relevant to the
+    growth levers above.
 
     Respond with a single JSON object. No commentary outside it.
 
