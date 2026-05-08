@@ -82,9 +82,16 @@ class GmailPoller(threading.Thread):
             logger.debug("Initial scan sentinel present; skipping.")
             return
 
-        # Ignore the live filter — we want EVERYTHING in the window, including
-        # already-read mail.
-        scan_query = f"newer_than:{days}d in:inbox"
+        # Ignore the live filter's `is:unread` constraint — we want all mail
+        # in the window, read or unread. But KEEP the noise filters so we
+        # don't burn LLM quota re-scoring obvious mailing lists from a month
+        # ago.
+        scan_query = (
+            f"newer_than:{days}d in:inbox "
+            "-category:promotions -category:social -category:updates "
+            "-category:forums -from:noreply -from:no-reply -from:donotreply "
+            "-from:do-not-reply -from:mailer-daemon -from:postmaster"
+        )
         max_msgs = settings.initial_scan_max_messages
         logger.info(
             "Initial historical scan: query=%r, max_messages=%d (this may take a while)",
