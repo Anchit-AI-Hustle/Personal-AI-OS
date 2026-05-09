@@ -47,13 +47,25 @@ class TaskService:
         sender: str,
         email_summary: Optional[str],
         tasks: Iterable[ExtractedTask],
+        received_at: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        sender_email: Optional[str] = None,
     ) -> int:
         # Source detail: human-readable name of who sent the email.
         detail = f"from {clean_sender_name(sender)}".strip()
+        # Direct Gmail link to the thread (or just the message if no thread id).
+        link = (
+            f"https://mail.google.com/mail/u/0/#inbox/{thread_id}"
+            if thread_id else
+            f"https://mail.google.com/mail/u/0/#inbox/{gmail_message_id}"
+        )
         return self._save(
             source_type="Email",
             source_ref_id=gmail_message_id,
             source_detail=detail or None,
+            source_link=link,
+            date_given=received_at,
+            spoc_contact=sender_email,
             summary=email_summary,
             default_speaker=clean_sender_name(sender) or sender,
             tasks=tasks,
@@ -66,6 +78,7 @@ class TaskService:
         chunk_index: int,
         chunk_summary: Optional[str],
         tasks: Iterable[ExtractedTask],
+        started_at: Optional[str] = None,
     ) -> int:
         ref = f"{session_id}:{chunk_index:04d}"
         # We're recording the user alone (no diarisation) — call it a voice memo.
@@ -75,6 +88,9 @@ class TaskService:
             source_type="Meeting",
             source_ref_id=ref,
             source_detail=detail,
+            source_link=None,
+            date_given=started_at,
+            spoc_contact=None,
             summary=chunk_summary,
             default_speaker=None,
             tasks=tasks,
@@ -88,11 +104,17 @@ class TaskService:
         chat_summary: Optional[str],
         tasks: Iterable[ExtractedTask],
         source_detail: Optional[str] = None,
+        source_link: Optional[str] = None,
+        sent_at: Optional[str] = None,
+        sender_contact: Optional[str] = None,
     ) -> int:
         return self._save(
             source_type="Chat",
             source_ref_id=f"chat:{chat_message_id}",
             source_detail=source_detail,
+            source_link=source_link,
+            date_given=sent_at,
+            spoc_contact=sender_contact,
             summary=chat_summary,
             default_speaker=sender,
             tasks=tasks,
@@ -104,6 +126,9 @@ class TaskService:
         source_type: str,
         source_ref_id: str,
         source_detail: Optional[str],
+        source_link: Optional[str],
+        date_given: Optional[str],
+        spoc_contact: Optional[str],
         summary: Optional[str],
         default_speaker: Optional[str],
         tasks: Iterable[ExtractedTask],
@@ -130,6 +155,9 @@ class TaskService:
                 sender_or_speaker=spoc,
                 summary=correct_names(summary or "") or None,
                 source_detail=source_detail,
+                source_link=source_link,
+                date_given=date_given,
+                spoc_contact=spoc_contact,
             )
             if row_id is not None:
                 inserted += 1

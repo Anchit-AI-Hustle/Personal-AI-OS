@@ -6,6 +6,7 @@ new message.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from ai import get_extractor
@@ -17,6 +18,19 @@ from utils.logger import get_logger
 from .task_service import TaskService
 
 logger = get_logger(__name__)
+
+# RFC 5322 address parser, lenient: pulls the bare email out of values like
+# "Aman Kumar <aman@vahdam.com>" or just "aman@vahdam.com".
+_EMAIL_RE = re.compile(r'<([^>]+@[^>]+)>|([^\s<>"]+@[^\s<>"]+)')
+
+
+def _extract_email_address(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    m = _EMAIL_RE.search(raw)
+    if not m:
+        return None
+    return (m.group(1) or m.group(2)).strip()
 
 
 class EmailService:
@@ -71,6 +85,9 @@ class EmailService:
                 sender=msg.sender,
                 email_summary=extraction.summary,
                 tasks=extraction.tasks,
+                received_at=msg.received_at,
+                thread_id=msg.thread_id,
+                sender_email=_extract_email_address(msg.sender),
             )
 
         self._db.record_processed_email(

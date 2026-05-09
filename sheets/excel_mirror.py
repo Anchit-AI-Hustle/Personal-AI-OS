@@ -30,7 +30,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from config import settings
 from utils.logger import get_logger
 
-from .client import HEADERS, LEGACY_HEADERS_NO_SOURCE, TAB_ORDER
+from .client import HEADERS, LEGACY_SCHEMAS, TAB_ORDER
 
 logger = get_logger(__name__)
 
@@ -47,13 +47,16 @@ def _column_widths() -> dict[str, int]:
         "A": 36,  # Task Heading
         "B": 60,  # Task Description
         "C": 12,  # Status
-        "D": 12,  # Source (Email | Chat | Meeting)
-        "E": 50,  # Why We're Doing This
-        "F": 18,  # Growth Pillar
-        "G": 22,  # SPOC
-        "H": 12,  # Priority
-        "I": 18,  # Go Live
-        "J": 30,  # Remarks
+        "D": 28,  # Source (Email | Chat | Meeting + detail)
+        "E": 32,  # Source Link
+        "F": 22,  # Date Given
+        "G": 50,  # Why We're Doing This
+        "H": 18,  # Growth Pillar
+        "I": 22,  # SPOC
+        "J": 28,  # SPOC Contact
+        "K": 12,  # Priority
+        "L": 18,  # Go Live
+        "M": 30,  # Remarks
     }
 
 
@@ -185,25 +188,32 @@ class ExcelMirror:
 
     def _heal_legacy_schema(self, ws) -> None:
         """
-        Bring an existing worksheet onto the current 10-col HEADERS layout.
+        Bring an existing worksheet onto the current HEADERS layout.
 
-        Two known drift cases are handled:
-          1. Legacy 9-col schema (pre-"Source"): every existing row gets a
-             blank cell inserted at column D, then the header is rewritten.
-          2. Header row has trailing junk (e.g. an extra `None` cell that
-             came from an off-by-one append): truncate to len(HEADERS).
+        Drift cases handled:
+          1. Any layout listed in LEGACY_SCHEMAS — blank columns are
+             inserted at the recorded indices to realign existing data
+             with the new HEADERS, then the header row is rewritten.
+          2. Header is the correct prefix but has trailing junk cells:
+             truncate to len(HEADERS).
         """
         header = [ws.cell(row=1, column=c).value for c in range(1, ws.max_column + 1)]
 
-        # Case 1: legacy 9-col layout — shift data right and rewrite header.
-        if header[: len(LEGACY_HEADERS_NO_SOURCE)] == LEGACY_HEADERS_NO_SOURCE:
-            logger.info(
-                "Excel mirror: tab %r is on legacy 9-col schema; inserting blank Source column.",
-                ws.title,
-            )
-            ws.insert_cols(4)  # 1-indexed: insert before column D
-            self._write_header(ws)
-            return
+        # Case 1: known legacy layout — shift data right and rewrite header.
+        for legacy_header, insert_at in LEGACY_SCHEMAS:
+            if header[: len(legacy_header)] == legacy_header:
+                logger.info(
+                    "Excel mirror: tab %r is on legacy %d-col schema; "
+                    "inserting %d blank column(s) to migrate.",
+                    ws.title, len(legacy_header), len(insert_at),
+                )
+                # openpyxl's insert_cols is 1-indexed; LEGACY_SCHEMAS is 0-indexed.
+                # Apply ascending so each subsequent index is correct in the
+                # post-insert coordinate space.
+                for idx in sorted(insert_at):
+                    ws.insert_cols(idx + 1)
+                self._write_header(ws)
+                return
 
         # Case 2: header is correct prefix but has trailing extras.
         if header[: len(HEADERS)] == HEADERS and ws.max_column > len(HEADERS):
