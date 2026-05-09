@@ -2,26 +2,24 @@
 Background worker that flushes locally-stored tasks to Google Sheets.
 
 The DB is the source of truth, the sheet is the surface. Each task is
-DUAL-WRITTEN: once into the source-specific tab (Tasks From Mails or
-Tasks From Discussions) and once into the consolidated "All Tasks" tab.
-If either append fails, the tasks stay marked unsynced and we retry on
-the next cycle.
+DUAL-WRITTEN: once into the source-specific tab (Tasks From Mails,
+Tasks From Discussions, or Tasks From WhatsApp) and once into the
+consolidated "All Tasks" tab. If either append fails, the tasks stay
+marked unsynced and we retry on the next cycle.
 """
 from __future__ import annotations
 
 import threading
 import time
+from collections import defaultdict
 from typing import Optional
 
 from database import get_db
 from utils.logger import get_logger
 
 from .client import (
-    HEADERS,
     SheetsClient,
     TAB_ALL_TASKS,
-    TAB_FROM_DISCUSSIONS,
-    TAB_FROM_MAILS,
     get_sheets_client,
     source_tab_for,
 )
@@ -131,19 +129,15 @@ class SheetsSyncWorker(threading.Thread):
             if not tasks:
                 break
 
-            # Group by source tab so we get one append per tab per source-type.
-            from_mails: list = []
-            from_discussions: list = []
+            # Group by source tab so we get one append per tab per cycle.
+            buckets: dict[str, list] = defaultdict(list)
             for t in tasks:
-                tab = source_tab_for(t["source_type"])
-                if tab == TAB_FROM_MAILS:
-                    from_mails.append(t)
-                else:
-                    from_discussions.append(t)
+                buckets[source_tab_for(t["source_type"])].append(t)
 
-            # Append source-specific tabs first, then "All Tasks".
-            self._flush_to_tab(from_mails)
-            self._flush_to_tab(from_discussions)
+            # Flush each bucket independently. Order is irrelevant —
+            # _flush_to_tab dual-writes (source tab + "All Tasks").
+            for bucket in buckets.values():
+                self._flush_to_tab(bucket)
 
             rows_pushed += len(tasks)
 

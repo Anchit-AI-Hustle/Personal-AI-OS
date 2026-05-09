@@ -2,7 +2,7 @@
 Local Excel mirror of the Google Sheets surface.
 
 Writes the same task rows that go to Google Sheets into a workbook at
-the repo root (`tasks.xlsx`), preserving the same 3-tab layout and 10
+the repo root (`tasks.xlsx`), preserving the same 4-tab layout and 13
 columns (see HEADERS in sheets/client.py). The file lives in git so the task list is review-able from
 GitHub directly, and a clone of the repo always has the latest
 snapshot baked in.
@@ -49,13 +49,13 @@ def _column_widths() -> dict[str, int]:
         "C": 12,  # Status
         "D": 28,  # Source (Email | Chat | Meeting + detail)
         "E": 32,  # Source Link
-        "F": 22,  # Date Given
+        "F": 22,  # Task Given At
         "G": 50,  # Why We're Doing This
         "H": 18,  # Growth Pillar
         "I": 22,  # SPOC
         "J": 28,  # SPOC Contact
         "K": 12,  # Priority
-        "L": 18,  # Go Live
+        "L": 18,  # Task Deadline
         "M": 30,  # Remarks
     }
 

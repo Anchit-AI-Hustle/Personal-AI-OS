@@ -385,7 +385,9 @@ class Database:
     def recent_tasks(self, since_iso: str) -> list[sqlite3.Row]:
         return self.fetchall(
             """
-            SELECT id, source_type, task, deadline, urgency, sender_or_speaker,
+            SELECT id, source_type, source_detail, source_link, source_ref_id,
+                   date_given, task, task_description, rationale, growth_pillar,
+                   deadline, urgency, sender_or_speaker, spoc_contact,
                    summary, status, created_at
               FROM extracted_tasks
              WHERE created_at >= ?

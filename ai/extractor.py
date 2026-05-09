@@ -81,6 +81,11 @@ def _coerce_task(raw: dict[str, Any], default_speaker: Optional[str] = None) -> 
     )
 
     speaker = _safe_str(raw.get("owner")) or _safe_str(raw.get("spoc")) or default_speaker
+    owner_contact = (
+        _safe_str(raw.get("owner_contact"))
+        or _safe_str(raw.get("spoc_contact"))
+        or _safe_str(raw.get("contact"))
+    )
     return ExtractedTask(
         task_heading=heading,
         task_description=description,
@@ -89,6 +94,7 @@ def _coerce_task(raw: dict[str, Any], default_speaker: Optional[str] = None) -> 
         urgency=normalise_urgency(_safe_str(raw.get("urgency"))),
         deadline=_safe_str(raw.get("deadline")),
         sender_or_speaker=speaker,
+        owner_contact=owner_contact,
     )
 
 

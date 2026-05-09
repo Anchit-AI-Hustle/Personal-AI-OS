@@ -118,13 +118,19 @@ class Settings:
     enable_chat_poller: bool
     chat_polling_interval: int
 
+    # Outbound notifications (Gmail digest)
+    notification_recipient: Optional[str]
+    enable_notifications: bool
+
     # OAuth scopes — Chat scopes added so we can also read Spaces/DMs.
-    # Adding new scopes here triggers a re-consent on next run if the
-    # current token doesn't have them.
+    # gmail.send added for the outbound digest. Adding new scopes here
+    # triggers a re-consent on next run if the current token doesn't
+    # have them.
     oauth_scopes: tuple = field(
         default=(
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/chat.spaces.readonly",
             "https://www.googleapis.com/auth/chat.messages.readonly",
@@ -218,6 +224,9 @@ def _load() -> Settings:
         initial_scan_max_messages=_env_int("INITIAL_SCAN_MAX_MESSAGES", 1000),
         enable_chat_poller=_env_bool("ENABLE_CHAT_POLLER", True),
         chat_polling_interval=_env_int("CHAT_POLLING_INTERVAL", 60),
+        notification_recipient=_env("NOTIFICATION_RECIPIENT")
+        or _env("EXPECTED_GOOGLE_ACCOUNT"),
+        enable_notifications=_env_bool("ENABLE_NOTIFICATIONS", True),
     )
 
 
