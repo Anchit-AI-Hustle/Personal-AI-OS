@@ -93,7 +93,7 @@ from database import get_db  # noqa: E402
 from gmail import GmailPoller  # noqa: E402
 from meetings import MeetingPipeline  # noqa: E402
 from services import ChatService, DailySummaryWorker, EmailService  # noqa: E402
-from sheets import SheetsSyncWorker  # noqa: E402
+from sheets import ReverseSyncWorker, SheetsSyncWorker  # noqa: E402
 from utils.logger import get_logger, setup_logging  # noqa: E402
 
 setup_logging()
@@ -115,6 +115,7 @@ class PersonalAIOS:
         self._gmail_poller: Optional[GmailPoller] = None
         self._chat_poller: Optional[ChatPoller] = None
         self._sheets_worker: Optional[SheetsSyncWorker] = None
+        self._reverse_sync: Optional[ReverseSyncWorker] = None
         self._meeting_pipeline: Optional[MeetingPipeline] = None
         self._daily_worker: Optional[DailySummaryWorker] = None
 
@@ -153,6 +154,10 @@ class PersonalAIOS:
         if any_producer:
             self._sheets_worker = SheetsSyncWorker(stop_event=self.stop_event)
             self._sheets_worker.start()
+            # Reverse sync only makes sense when forward sync is on —
+            # there's nothing to read back if we never wrote anything.
+            self._reverse_sync = ReverseSyncWorker(stop_event=self.stop_event)
+            self._reverse_sync.start()
         else:
             logger.info("Sheets sync skipped: nothing to push.")
 
@@ -190,6 +195,7 @@ class PersonalAIOS:
             self._gmail_poller,
             self._chat_poller,
             self._sheets_worker,
+            self._reverse_sync,
             self._daily_worker,
         ):
             if worker is not None and worker.is_alive():
