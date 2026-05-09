@@ -55,7 +55,7 @@ def _resolve_path(raw: Optional[str], default_relative: str) -> Path:
 @dataclass(frozen=True)
 class Settings:
     # LLM provider selector
-    llm_provider: str   # "gemini" | "groq"
+    llm_provider: str   # "gemini" | "groq" | "ollama"
 
     # Gemini-specific (always populated; ignored if provider != gemini)
     llm_api_key: str    # alias for gemini_api_key, kept for backward compat
@@ -64,6 +64,10 @@ class Settings:
     # Groq-specific
     groq_api_key: str
     groq_model: str
+
+    # Ollama-specific (local model server, no API key)
+    ollama_model: str
+    ollama_host: str
 
     # Google Sheets
     google_sheet_id: str
@@ -149,15 +153,16 @@ class Settings:
 
 def _load() -> Settings:
     provider = (_env("LLM_PROVIDER", "gemini") or "gemini").strip().lower()
-    if provider not in ("gemini", "groq"):
+    if provider not in ("gemini", "groq", "ollama"):
         raise RuntimeError(
-            f"LLM_PROVIDER must be 'gemini' or 'groq', got {provider!r}."
+            f"LLM_PROVIDER must be 'gemini', 'groq', or 'ollama', got {provider!r}."
         )
 
     gemini_api_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY") or ""
     groq_api_key = _env("GROQ_API_KEY") or ""
 
-    # Validate the key for the SELECTED provider only.
+    # Validate the key for the SELECTED provider only. Ollama is local
+    # and needs no key — we just need a model name and host.
     if provider == "gemini" and not gemini_api_key:
         raise RuntimeError(
             "LLM_PROVIDER=gemini but GEMINI_API_KEY is missing in .env. "
@@ -191,6 +196,8 @@ def _load() -> Settings:
         llm_model=_env("GEMINI_MODEL", "gemini-2.0-flash") or "gemini-2.0-flash",
         groq_api_key=groq_api_key,
         groq_model=_env("GROQ_MODEL", "llama-3.1-8b-instant") or "llama-3.1-8b-instant",
+        ollama_model=_env("OLLAMA_MODEL", "llama3.1:8b") or "llama3.1:8b",
+        ollama_host=_env("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434",
         google_sheet_id=sheet_id,
         google_sheet_tab=_env("GOOGLE_SHEET_TAB", "Tasks") or "Tasks",
         polling_interval=_env_int("POLLING_INTERVAL", 30),
