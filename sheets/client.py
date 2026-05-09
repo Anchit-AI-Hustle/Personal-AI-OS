@@ -15,12 +15,15 @@ Column layout (same in all three tabs):
     B  Task Description     (always includes context: project / topic / customer)
     C  Status               (open | done | dropped)
     D  Source               (e.g. "Email | from Aman <aman@vahdam.com>")
-    E  Why We're Doing This (the rationale / business reason)
-    F  Growth Pillar        (Operations | Retention | Acquisition | ... | Other)
-    G  SPOC                 (the person responsible — sender or speaker)
-    H  Priority             (Low | Medium | High | Critical)
-    I  Go Live              (deadline / when this should ship)
-    J  Remarks              (left blank — for human use)
+    E  Source Link          (URL to original Gmail thread / chat space / session)
+    F  Date Given           (ISO 8601 — when the source was created/discussed)
+    G  Why We're Doing This (the rationale / business reason)
+    H  Growth Pillar        (Operations | Retention | Acquisition | ... | Other)
+    I  SPOC                 (the person responsible — sender or speaker)
+    J  SPOC Contact         (email / phone if known)
+    K  Priority             (Low | Medium | High | Critical)
+    L  Go Live              (deadline / when this should ship)
+    M  Remarks              (left blank — for human use)
 """
 from __future__ import annotations
 
@@ -46,32 +49,66 @@ TAB_ORDER: tuple[str, ...] = (TAB_ALL_TASKS, TAB_FROM_DISCUSSIONS, TAB_FROM_MAIL
 
 
 HEADERS: list[str] = [
-    "Task Heading",
-    "Task Description",
-    "Status",
-    "Source",
-    "Why We're Doing This",
-    "Growth Pillar",
-    "SPOC",
-    "Priority",
-    "Go Live",
-    "Remarks",
+    "Task Heading",       # A
+    "Task Description",   # B
+    "Status",             # C
+    "Source",             # D
+    "Source Link",        # E
+    "Date Given",         # F
+    "Why We're Doing This",  # G
+    "Growth Pillar",      # H
+    "SPOC",               # I
+    "SPOC Contact",       # J
+    "Priority",           # K
+    "Go Live",            # L
+    "Remarks",            # M
 ]
 
-# Pre-"Source" 9-column layout used by older deployments. Self-heal logic
-# in SheetsClient and ExcelMirror detects this and inserts a blank Source
-# column at index 3 to bring rows into the current schema.
-LEGACY_HEADERS_NO_SOURCE: list[str] = [
-    "Task Heading",
-    "Task Description",
-    "Status",
-    "Why We're Doing This",
-    "Growth Pillar",
-    "SPOC",
-    "Priority",
-    "Go Live",
-    "Remarks",
+# Status column letter — used by update_status. If HEADERS shifts, change here.
+STATUS_COL_LETTER = "C"
+
+# Known prior schemas. Self-heal logic detects these by header-row equality
+# and migrates the worksheet onto the current HEADERS layout.
+#
+# Each entry maps {column index (0-based) -> blank to insert}. Indices are
+# applied in ascending order to a row matching the legacy layout, producing
+# a row matching HEADERS.
+LEGACY_SCHEMAS: list[tuple[list[str], list[int]]] = [
+    # 9-col pre-"Source": insert Source(D=3), Source Link(E=4), Date Given(F=5),
+    # SPOC Contact(J=9).
+    (
+        [
+            "Task Heading", "Task Description", "Status",
+            "Why We're Doing This", "Growth Pillar", "SPOC",
+            "Priority", "Go Live", "Remarks",
+        ],
+        [3, 4, 5, 9],
+    ),
+    # 10-col post-"Source" (the immediately previous schema): insert Source Link(E=4),
+    # Date Given(F=5), SPOC Contact(J=9).
+    (
+        [
+            "Task Heading", "Task Description", "Status", "Source",
+            "Why We're Doing This", "Growth Pillar", "SPOC",
+            "Priority", "Go Live", "Remarks",
+        ],
+        [4, 5, 9],
+    ),
 ]
+
+# Kept as an alias so older imports don't break.
+LEGACY_HEADERS_NO_SOURCE: list[str] = LEGACY_SCHEMAS[0][0]
+
+
+def _col_letter(n: int) -> str:
+    """1-based column index -> A1 letter (A, B, ..., Z, AA, AB, ...)."""
+    if n < 1:
+        raise ValueError("column index must be >= 1")
+    result = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        result = chr(ord("A") + rem) + result
+    return result
 
 
 def source_tab_for(source_type: str) -> str:
@@ -181,7 +218,10 @@ class SheetsClient:
         retry_call(_call, attempts=3, exceptions=(HttpError, TimeoutError))
 
     def _ensure_header_row(self, tab: str) -> None:
-        rng = f"'{tab}'!A1:J1"
+        # Read up to twice the current width so we still detect older headers
+        # that had fewer columns.
+        end_col = _col_letter(max(len(HEADERS), 13))
+        rng = f"'{tab}'!A1:{end_col}1"
 
         def _read() -> list:
             resp = (
@@ -193,38 +233,40 @@ class SheetsClient:
             return resp.get("values") or []
 
         rows = retry_call(_read, attempts=3, exceptions=(HttpError, TimeoutError))
-        if rows and rows[0] == HEADERS:
+        current_header = rows[0] if rows else []
+        if current_header[: len(HEADERS)] == HEADERS and len(current_header) == len(HEADERS):
             return  # already correct
 
-        # Legacy schema: header row is the 9-col pre-"Source" layout.
-        # Insert an empty column D in every existing data row so the
-        # historical data realigns with the new HEADERS before we rewrite
-        # the header.
-        if rows and rows[0][: len(LEGACY_HEADERS_NO_SOURCE)] == LEGACY_HEADERS_NO_SOURCE:
-            logger.info(
-                "Tab %r is on the legacy 9-col schema; inserting blank Source column at D.",
-                tab,
-            )
-            self._insert_blank_source_column(tab)
+        # Legacy schema migration: shift existing data right so each row's
+        # cells realign with the new HEADERS, then rewrite the header.
+        for legacy_header, insert_at in LEGACY_SCHEMAS:
+            if current_header[: len(legacy_header)] == legacy_header:
+                logger.info(
+                    "Tab %r is on a legacy %d-col schema; inserting %d blank column(s) to migrate.",
+                    tab, len(legacy_header), len(insert_at),
+                )
+                self._insert_blank_columns(tab, insert_at)
+                break
 
         logger.info("Writing header row to tab %r", tab)
 
         def _write() -> None:
             self._svc.spreadsheets().values().update(
                 spreadsheetId=self._sheet_id,
-                range=rng,
+                range=f"'{tab}'!A1:{_col_letter(len(HEADERS))}1",
                 valueInputOption="RAW",
                 body={"values": [HEADERS]},
             ).execute()
 
         retry_call(_write, attempts=3, exceptions=(HttpError, TimeoutError))
 
-    def _insert_blank_source_column(self, tab: str) -> None:
+    def _insert_blank_columns(self, tab: str, indices: list[int]) -> None:
         """
-        Shift columns D..end one to the right, leaving an empty column D.
-        Used to migrate a tab from the legacy 9-col schema (no Source) to
-        the current 10-col schema. Idempotency is enforced by the caller
-        (only invoked when the header row matches LEGACY_HEADERS_NO_SOURCE).
+        Insert blank columns at the given 0-based indices on `tab`.
+
+        Indices must reference positions in the FINAL (post-insert) layout,
+        applied in ascending order. Each insertion shifts columns at and after
+        that position one to the right.
         """
         meta = self._fetch_meta()
         sheet_id = None
@@ -235,21 +277,26 @@ class SheetsClient:
         if sheet_id is None:
             return
 
-        request = {
-            "insertDimension": {
-                "range": {
-                    "sheetId": sheet_id,
-                    "dimension": "COLUMNS",
-                    "startIndex": 3,   # column D, 0-indexed
-                    "endIndex": 4,
-                },
-                "inheritFromBefore": False,
+        # Apply ascending so each subsequent index is correct in the
+        # post-insert coordinate space.
+        requests = [
+            {
+                "insertDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "COLUMNS",
+                        "startIndex": idx,
+                        "endIndex": idx + 1,
+                    },
+                    "inheritFromBefore": False,
+                }
             }
-        }
+            for idx in sorted(indices)
+        ]
         try:
-            self._batch_update([request])
+            self._batch_update(requests)
         except Exception:
-            logger.exception("Could not insert blank Source column into %r", tab)
+            logger.exception("Could not insert blank columns into %r", tab)
 
     def _style_headers(self) -> None:
         """Bold + frozen + light-grey-fill row 1 across all 3 tabs."""
@@ -347,14 +394,14 @@ class SheetsClient:
         return first_row
 
     def update_status(self, tab: str, row_number: int, status: str) -> None:
-        """Update column C (Status) of the given 1-based row."""
+        """Update the Status column of the given 1-based row."""
         if row_number is None or row_number < 2:
             return
 
         def _call() -> None:
             self._svc.spreadsheets().values().update(
                 spreadsheetId=self._sheet_id,
-                range=f"'{tab}'!C{row_number}",
+                range=f"'{tab}'!{STATUS_COL_LETTER}{row_number}",
                 valueInputOption="RAW",
                 body={"values": [[status]]},
             ).execute()

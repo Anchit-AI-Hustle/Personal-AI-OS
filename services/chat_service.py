@@ -80,6 +80,29 @@ def _compute_source_detail(msg: ChatMessage) -> str:
     return msg.space_type or "Chat"
 
 
+def _compute_source_link(msg: ChatMessage) -> Optional[str]:
+    """
+    Build a clickable Google Chat URL for the originating space.
+
+    Format (works in any logged-in Google Chrome profile):
+      https://mail.google.com/chat/u/0/#chat/space/<bare-space-id>
+      https://mail.google.com/chat/u/0/#chat/dm/<bare-space-id>
+
+    Google Chat doesn't expose stable per-message deep-links via the API,
+    so we fall back to linking to the space itself. Clicking opens the
+    conversation; finding the message is one scroll.
+    """
+    if not msg.space_name:
+        return None
+    # space_name looks like "spaces/AAAA1234" — strip the prefix.
+    bare = msg.space_name.split("/", 1)[-1] if "/" in msg.space_name else msg.space_name
+    if msg.space_type == "DIRECT_MESSAGE":
+        path = "dm"
+    else:
+        path = "space"
+    return f"https://mail.google.com/chat/u/0/#chat/{path}/{bare}"
+
+
 def _resolve_sender_label(msg: ChatMessage) -> str:
     """Display label for the message sender ('Anchit (Self)' for self)."""
     sender_block = msg.raw.get("sender") if isinstance(msg.raw, dict) else None
@@ -104,6 +127,7 @@ class ChatService:
 
         sender_label = _resolve_sender_label(msg)
         source_detail = _compute_source_detail(msg)
+        source_link = _compute_source_link(msg)
         is_from_self = sender_label == settings.self_display_name
 
         # Frame the prompt so the LLM understands the role.
@@ -159,6 +183,8 @@ class ChatService:
                 chat_summary=extraction.summary,
                 tasks=extraction.tasks,
                 source_detail=source_detail,
+                source_link=source_link,
+                sent_at=msg.create_time,
             )
 
         self._db.record_processed_email(

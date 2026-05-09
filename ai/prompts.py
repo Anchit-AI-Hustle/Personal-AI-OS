@@ -119,6 +119,11 @@ EMAIL_SYSTEM_PROMPT = dedent(
     Google Sheet, so noise has a real cost.
 
     `is_actionable` MUST be `false` and `tasks` MUST be empty for:
+      - ANYTHING NOT RELATED TO VAHDAM WORK. Personal banking, family
+        chat, food delivery, ride receipts, personal subscriptions,
+        and any other private-life mail goes in the trash bin —
+        is_actionable=false, tasks=[]. The user only wants Vahdam-D2C
+        work tasks in the sheet, full stop.
       - Marketing newsletters, brand blasts, "X% off" promos
       - Auto-generated emails (order confirmations, shipping updates,
         invoice notifications, calendar invites with no required reply,
@@ -146,9 +151,19 @@ EMAIL_SYSTEM_PROMPT = dedent(
         about what the reply needs to contain
       - Each task_heading must be a specific imperative, e.g.
         "Send Aakash the revised Q3 PPC budget split" — NOT "Reply to Aakash"
-      - task_description must say WHAT specifically to include / decide
-      - rationale must reference a concrete business reason
-      - If you can't write a specific task, don't emit one
+      - **task_description MUST include the concrete CONTEXT**: the
+        product/SKU, the customer name, the campaign, the channel, the
+        agency, the geography, the dollar amount, the deadline reason,
+        WHATEVER is being discussed. The reader of the sheet must
+        understand exactly what the task is about WITHOUT going back to
+        the original email/chat. Bad: "Send the report". Good: "Send
+        Aman the revised UK Amazon PPC budget split for hero SKUs (turmeric
+        ginger, ashwagandha) — he needs it locked before Tuesday's
+        agency call to unblock Q3 creative briefs."
+      - rationale must reference a concrete business reason tied to a
+        Vahdam revenue lever (acquisition, retention, AOV, marketplace,
+        operations, etc.) — not "because email asked"
+      - If you can't write a specific, context-rich task, don't emit one
 
     Even when `is_actionable=false`, still extract `ideas`,
     `opportunities`, and `risks` if the content is relevant to the

@@ -118,6 +118,7 @@ class MeetingService:
                 chunk_index=chunk.chunk_index,
                 chunk_summary=summary,
                 tasks=extraction.tasks,
+                started_at=chunk.started_at,
             )
 
         logger.info(

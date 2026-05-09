@@ -35,12 +35,12 @@ BATCH_SIZE = 50
 
 def _row_for_task(task) -> list[str]:
     """
-    Map a DB row to the 10-column sheet shape.
+    Map a DB row to the 13-column sheet shape.
 
     Column order (matches HEADERS in sheets/client.py):
-      Task Heading | Task Description | Status | Source |
-      Why We're Doing This | Growth Pillar | SPOC | Priority |
-      Go Live | Remarks
+      Task Heading | Task Description | Status | Source | Source Link |
+      Date Given | Why We're Doing This | Growth Pillar | SPOC |
+      SPOC Contact | Priority | Go Live | Remarks
     """
     # `task` is a sqlite3.Row; .keys() lets us tolerate older rows that
     # predate the migration columns.
@@ -63,14 +63,22 @@ def _row_for_task(task) -> list[str]:
     src_detail = get("source_detail")
     source_label = f"{src_type} | {src_detail}" if src_detail else src_type
 
+    # Date Given falls back to created_at if the source-specific timestamp
+    # was never recorded (e.g. for tasks inserted before the date_given
+    # column existed).
+    date_given = get("date_given") or get("created_at")
+
     return [
         get("task"),                          # Task Heading
         get("task_description"),              # Task Description
         get("status") or "open",              # Status
         source_label,                         # Source
+        get("source_link"),                   # Source Link
+        date_given,                           # Date Given
         get("rationale"),                     # Why We're Doing This
         get("growth_pillar") or "Other",      # Growth Pillar
         get("sender_or_speaker"),             # SPOC
+        get("spoc_contact"),                  # SPOC Contact
         get("urgency") or "Medium",           # Priority
         get("deadline"),                      # Go Live
         "",                                   # Remarks (left blank for human use)
