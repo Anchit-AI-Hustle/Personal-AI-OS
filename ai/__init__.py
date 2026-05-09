@@ -1,14 +1,14 @@
 """
 LLM integration.
 
-`get_llm_client()` is a factory: it returns the Gemini or Groq client
-based on the `LLM_PROVIDER` env var (defaults to `gemini` for backward
-compatibility). All callers should use `get_llm_client()` — never reach
-into the provider-specific modules directly.
+`get_llm_client()` is a factory: it returns the Gemini, Groq, or Ollama
+client based on the `LLM_PROVIDER` env var (defaults to `gemini` for
+backward compatibility). All callers should use `get_llm_client()` —
+never reach into the provider-specific modules directly.
 
 `QuotaExhaustedError` is the shared signal that the configured key has
 no usable quota right now; it lives in `ai.errors` so importers don't
-care which provider is active.
+care which provider is active. Ollama is local and never raises this.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ _cached_client = None
 
 
 def get_llm_client():
-    """Return the configured LLM client (Gemini by default, or Groq)."""
+    """Return the configured LLM client (gemini | groq | ollama)."""
     global _cached_client
     if _cached_client is not None:
         return _cached_client
@@ -41,9 +41,13 @@ def get_llm_client():
         elif provider == "gemini":
             from .gemini_client import get_gemini_client
             _cached_client = get_gemini_client()
+        elif provider == "ollama":
+            from .ollama_client import get_ollama_client
+            _cached_client = get_ollama_client()
         else:
             raise RuntimeError(
-                f"Unknown LLM_PROVIDER={provider!r}. Use 'gemini' or 'groq'."
+                f"Unknown LLM_PROVIDER={provider!r}. "
+                f"Use 'gemini', 'groq', or 'ollama'."
             )
         return _cached_client
 
