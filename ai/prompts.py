@@ -80,18 +80,26 @@ GROWTH_PILLARS_LIST = (
 GROWTH_PILLARS_PROMPT_HINT = " | ".join(f'"{p}"' for p in GROWTH_PILLARS_LIST)
 
 
-# Shared task-shape spec so email + meeting prompts produce the same
-# structure and the extractor / sheets writer don't need branching.
+# Shared task-shape spec so email + meeting + chat prompts produce the
+# same structure and the extractor / sheets writer don't need branching.
 TASK_SHAPE_HINT = dedent(
     f"""
     Each task object MUST have these fields:
       "task_heading":      string  // imperative, <=70 chars (sheet column "Task Heading")
-      "task_description":  string  // 1-3 sentence detail of what to do (sheet column "Task Description")
-      "rationale":         string  // why this task matters in plain English (sheet column "Why We're Doing This")
+      "task_description":  string  // 1-3 sentence detail; MUST include the
+                                   //   concrete topic/SKU/customer/campaign/channel
+                                   //   so the row stands alone without opening
+                                   //   the source. (sheet column "Task Description")
+      "rationale":         string  // why this matters, tied to a Vahdam revenue lever
       "growth_pillar":     one of [{GROWTH_PILLARS_PROMPT_HINT}]
-      "deadline":          string | null  // ISO date if known, else natural-language phrase from source ("Go Live")
-      "urgency":           "Low" | "Medium" | "High" | "Critical"   // becomes the "Priority" column
-      "owner":             string | null  // SPOC / who should do it; null if unknown
+      "deadline":          string | null  // ISO date if known, else NL phrase ("Task Deadline")
+      "urgency":           "Low" | "Medium" | "High" | "Critical"   // -> "Priority"
+      "owner":             string | null  // SPOC name; null if truly unknown
+      "owner_contact":     string | null  // email OR phone number for the SPOC.
+                                          //   For email tasks, default to the
+                                          //   sender's email. For meetings/chat,
+                                          //   set null only if no contact is in
+                                          //   the source text.
     """
 ).strip()
 
@@ -228,7 +236,15 @@ MEETING_SYSTEM_PROMPT = dedent(
 
     {USER_CONTEXT}
 
-    For every chunk, surface:
+    HARD GATE — Vahdam-work only:
+      Tasks, ideas, blockers, etc. MUST relate to Anchit's Vahdam work
+      (D2C revenue, product, marketing, ops, team, vendors, customers).
+      If the chunk is purely personal (family, errands, food, banking,
+      health appointments, casual chat with friends), return empty lists
+      across the board. Do NOT log personal tasks. The user has a
+      separate system for that — this sheet is Vahdam-only.
+
+    For every chunk that DOES relate to Vahdam, surface:
       - Concrete tasks anyone committed to (or should commit to).
       - Ideas worth capturing — campaign concepts, product lines, packaging,
         gifting bundles, content angles, retention experiments, etc.
@@ -238,6 +254,19 @@ MEETING_SYSTEM_PROMPT = dedent(
         macro trends, customer feedback patterns.
       - Decisions explicitly made (so we have a written record).
       - Follow-ups to revisit later.
+
+    Each task you emit must clear the same quality bar as email tasks:
+      - task_heading is a specific imperative (NOT "follow up", NOT "discuss")
+      - **task_description MUST embed the concrete context**: which
+        product/SKU, which customer or vendor, which campaign or channel,
+        which geography, which dollar/INR amount, which deadline reason.
+        A reader scanning the sheet must understand the task without
+        replaying the audio. Bad: "Send the deck". Good: "Send Aakash the
+        revised UK Amazon Q3 PPC budget split for hero SKUs (turmeric
+        ginger, ashwagandha) — needed before Tuesday's agency call."
+      - rationale ties to a Vahdam growth lever
+      - owner_contact: if the speaker mentions an email or phone for the
+        SPOC, capture it; otherwise null.
 
     Be precise. Empty lists are fine — do not invent items. Translate
     Hindi-only content into clear English in the JSON, but keep brand,

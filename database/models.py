@@ -114,8 +114,13 @@ class ExtractedTask:
 
     # Existing fields, repurposed.
     urgency: str = "Medium"           # -> "Priority" column
-    deadline: Optional[str] = None    # -> "Go Live" column
+    deadline: Optional[str] = None    # -> "Task Deadline" column
     sender_or_speaker: Optional[str] = None  # -> "SPOC" column
+
+    # Email or phone for the SPOC, when the source mentioned one. Falls
+    # back to the source-level contact (e.g. the email sender's address)
+    # in TaskService if the LLM didn't extract one.
+    owner_contact: Optional[str] = None  # -> "SPOC Contact" column
 
     # Free-text context attached at extraction time (the email/chunk summary).
     summary: Optional[str] = None

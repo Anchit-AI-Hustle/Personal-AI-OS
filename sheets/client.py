@@ -1,28 +1,29 @@
 """
 Google Sheets API client.
 
-Maintains three tabs in a fixed order:
-    1. All Tasks               (every task, both sources)
-    2. Tasks From Discussions  (meetings / voice memos)
-    3. Tasks From Mails        (email-derived)
+Maintains four tabs in a fixed order:
+    1. All Tasks               (master — every task across every source)
+    2. Tasks From Discussions  (meetings / voice memos / Google Chat)
+    3. Tasks From Mails        (Gmail-derived)
+    4. Tasks From WhatsApp     (WhatsApp-derived; ingestion bridge TBD)
 
 Every task gets dual-written: one row in its source-specific tab and
 one row in "All Tasks". The local DB stores both row numbers so future
 status updates can patch both rows.
 
-Column layout (same in all three tabs):
+Column layout (identical in all four tabs):
     A  Task Heading
     B  Task Description     (always includes context: project / topic / customer)
     C  Status               (open | done | dropped)
     D  Source               (e.g. "Email | from Aman <aman@vahdam.com>")
-    E  Source Link          (URL to original Gmail thread / chat space / session)
-    F  Date Given           (ISO 8601 — when the source was created/discussed)
+    E  Source Link          (deep-link to the originating message/thread/session)
+    F  Task Given At        (ISO 8601 — when the task was assigned/discussed)
     G  Why We're Doing This (the rationale / business reason)
     H  Growth Pillar        (Operations | Retention | Acquisition | ... | Other)
     I  SPOC                 (the person responsible — sender or speaker)
-    J  SPOC Contact         (email / phone if known)
+    J  SPOC Contact         (email or phone — never blank if SPOC is set)
     K  Priority             (Low | Medium | High | Critical)
-    L  Go Live              (deadline / when this should ship)
+    L  Task Deadline        (when this should ship / be done by)
     M  Remarks              (left blank — for human use)
 """
 from __future__ import annotations
@@ -45,7 +46,13 @@ logger = get_logger(__name__)
 TAB_ALL_TASKS = "All Tasks"
 TAB_FROM_DISCUSSIONS = "Tasks From Discussions"
 TAB_FROM_MAILS = "Tasks From Mails"
-TAB_ORDER: tuple[str, ...] = (TAB_ALL_TASKS, TAB_FROM_DISCUSSIONS, TAB_FROM_MAILS)
+TAB_FROM_WHATSAPP = "Tasks From WhatsApp"
+TAB_ORDER: tuple[str, ...] = (
+    TAB_ALL_TASKS,
+    TAB_FROM_DISCUSSIONS,
+    TAB_FROM_MAILS,
+    TAB_FROM_WHATSAPP,
+)
 
 
 HEADERS: list[str] = [
@@ -54,13 +61,13 @@ HEADERS: list[str] = [
     "Status",             # C
     "Source",             # D
     "Source Link",        # E
-    "Date Given",         # F
+    "Task Given At",      # F  (renamed from "Date Given")
     "Why We're Doing This",  # G
     "Growth Pillar",      # H
     "SPOC",               # I
     "SPOC Contact",       # J
     "Priority",           # K
-    "Go Live",            # L
+    "Task Deadline",      # L  (renamed from "Go Live")
     "Remarks",            # M
 ]
 
@@ -94,6 +101,17 @@ LEGACY_SCHEMAS: list[tuple[list[str], list[int]]] = [
         ],
         [4, 5, 9],
     ),
+    # 13-col schema with the old "Date Given" / "Go Live" header text
+    # (column positions identical to current HEADERS — just rewrite the
+    # header row, no data shift needed).
+    (
+        [
+            "Task Heading", "Task Description", "Status", "Source", "Source Link",
+            "Date Given", "Why We're Doing This", "Growth Pillar", "SPOC",
+            "SPOC Contact", "Priority", "Go Live", "Remarks",
+        ],
+        [],
+    ),
 ]
 
 # Kept as an alias so older imports don't break.
@@ -116,6 +134,9 @@ def source_tab_for(source_type: str) -> str:
     s = (source_type or "").lower()
     if s == "email":
         return TAB_FROM_MAILS
+    if s == "whatsapp":
+        return TAB_FROM_WHATSAPP
+    # Meeting / Chat / Conversation / anything else -> Discussions.
     return TAB_FROM_DISCUSSIONS
 
 
@@ -268,6 +289,8 @@ class SheetsClient:
         applied in ascending order. Each insertion shifts columns at and after
         that position one to the right.
         """
+        if not indices:
+            return
         meta = self._fetch_meta()
         sheet_id = None
         for s in meta.get("sheets", []):

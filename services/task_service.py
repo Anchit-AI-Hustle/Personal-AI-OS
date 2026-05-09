@@ -143,6 +143,11 @@ class TaskService:
             description = correct_names(task.task_description or "")
             rationale = correct_names(task.rationale or "")
             spoc = correct_names(task.sender_or_speaker or default_speaker or "") or None
+            # Per-task contact (from the LLM) wins; fall back to the
+            # source-level contact (e.g. email sender). Guarantees the
+            # SPOC Contact column is non-blank whenever we have any way
+            # of reaching the SPOC.
+            contact = (task.owner_contact or "").strip() or spoc_contact or None
             row_id = self._db.insert_task(
                 source_type=source_type,
                 source_ref_id=source_ref_id,
@@ -157,7 +162,7 @@ class TaskService:
                 source_detail=source_detail,
                 source_link=source_link,
                 date_given=date_given,
-                spoc_contact=spoc_contact,
+                spoc_contact=contact,
             )
             if row_id is not None:
                 inserted += 1
