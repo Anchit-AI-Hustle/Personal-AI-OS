@@ -31,6 +31,23 @@ SYNC_INTERVAL_SECONDS = 30
 BATCH_SIZE = 50
 
 
+def _format_iso_timestamp(value: Optional[str]) -> str:
+    """
+    Trim a stored ISO 8601 timestamp ("2026-05-08T22:19:22.697869+00:00")
+    to a sheet-friendly "2026-05-08 22:19" form. Anything that isn't ISO-
+    shaped (RFC 5322 email dates, plain dates, free-form strings) passes
+    through untouched so deadlines like "by the weekend" still display.
+    """
+    if not value:
+        return ""
+    s = str(value).strip()
+    # Only trim things that look like ISO 8601: starts with YYYY-MM-DDT.
+    if len(s) >= 16 and s[4] == "-" and s[7] == "-" and s[10] in ("T", " "):
+        # Cut off at minute precision; replace 'T' with space.
+        return s[:16].replace("T", " ")
+    return s
+
+
 def _format_source_label(*, source_type: str, source_detail: str) -> str:
     """
     Build the human-readable Source-column string. Maps DB source_type +
@@ -78,7 +95,12 @@ def _format_source_label(*, source_type: str, source_detail: str) -> str:
 
     if st.lower() == "meeting":
         if sl.startswith("voice memo by "):
-            return f"In-person meeting ({sd[len('voice memo by '):].strip()})"
+            # Run the speaker name through canonical_spoc so we don't
+            # end up with "In-person meeting (Anchit (Self))" — collapse
+            # to "In-person meeting (Anchit)".
+            from transcription.lexicon import canonical_spoc
+            speaker = canonical_spoc(sd[len("voice memo by "):].strip()) or ""
+            return f"In-person meeting ({speaker})" if speaker else "In-person meeting"
         return f"In-person meeting — {sd}" if sd else "In-person meeting"
 
     # Unknown source_type — pass through readable detail if any.
@@ -117,20 +139,20 @@ def _row_for_task(task) -> list[str]:
     date_given = get("date_given") or get("created_at")
 
     return [
-        get("task"),                          # Task Heading
-        get("task_description"),              # Task Description
-        get("status") or "open",              # Status
-        source_label,                         # Source
-        get("source_link"),                   # Source Link
-        date_given,                           # Task Given On
-        get("rationale"),                     # Why We're Doing This
-        get("growth_pillar") or "Other",      # Growth Pillar
-        get("sender_or_speaker"),             # SPOC
-        get("spoc_contact"),                  # SPOC Contact
-        get("urgency") or "Medium",           # Priority
-        get("deadline"),                      # Task Deadline
-        get("all_updates"),                   # All Updates (chronological)
-        "",                                   # Remarks (left blank for human use)
+        get("task"),                                   # Task Heading
+        get("task_description"),                       # Task Description
+        get("status") or "open",                       # Status
+        source_label,                                  # Source
+        get("source_link"),                            # Source Link
+        _format_iso_timestamp(date_given),             # Task Given On
+        get("rationale"),                              # Why We're Doing This
+        get("growth_pillar") or "Other",               # Growth Pillar
+        get("sender_or_speaker"),                      # SPOC
+        get("spoc_contact"),                           # SPOC Contact
+        get("urgency") or "Medium",                    # Priority
+        _format_iso_timestamp(get("deadline")),        # Task Deadline
+        get("all_updates"),                            # All Updates (chronological)
+        "",                                            # Remarks (left blank for human use)
     ]
 
 
