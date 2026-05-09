@@ -51,11 +51,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from openpyxl import load_workbook  # noqa: E402
-from openpyxl.utils.exceptions import InvalidFileException  # noqa: E402
-
 from database import get_db  # noqa: E402
-from sheets.client import HEADERS, LEGACY_SCHEMAS, LEGACY_TAB_RENAMES, TAB_ORDER  # noqa: E402
+from sheets.client import HEADERS, TAB_ORDER  # noqa: E402
 from sheets.excel_mirror import DEFAULT_PATH, ExcelMirror  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
 
@@ -162,86 +159,76 @@ def step2_reset_sync_state() -> int:
 
 
 def step3_rebuild_excel() -> bool:
-    """Rename legacy tabs, shift columns, wipe all data rows."""
-    path = DEFAULT_PATH
-    if not path.exists():
-        logger.info("Step 3 skipped: %s does not exist (will be created on next boot).", path)
-        return True
+    """
+    Rebuild `tasks.xlsx` from scratch with the 4 canonical tabs and the
+    13-column HEADERS. We deliberately do NOT try to migrate the existing
+    file in place — that path turned out to be brittle (openpyxl can
+    leave orphan worksheet parts behind, especially when the original
+    file passed through several legacy schemas). Rebuilding atomically
+    is simpler and bulletproof: the DB has every task, sync re-pushes
+    them all on next boot.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
 
+    path = DEFAULT_PATH
+
+    # Build fresh.
+    wb = Workbook()
+    # Replace the default "Sheet" with the first managed tab, then add the rest.
+    default = wb.active
+    default.title = TAB_ORDER[0]
+
+    header_font = Font(bold=True)
+    header_fill = PatternFill(
+        start_color="EAEAEA", end_color="EAEAEA", fill_type="solid"
+    )
+    header_align = Alignment(vertical="center")
+
+    def _write_header(ws) -> None:
+        for col, value in enumerate(HEADERS, start=1):
+            cell = ws.cell(row=1, column=col, value=value)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+        ws.freeze_panes = "A2"
+
+    _write_header(default)
+    for tab in TAB_ORDER[1:]:
+        ws = wb.create_sheet(title=tab)
+        _write_header(ws)
+
+    # Be paranoid — assert exactly the right tab set before saving.
+    assert list(wb.sheetnames) == list(TAB_ORDER), (
+        f"workbook has unexpected tabs: {wb.sheetnames}"
+    )
+
+    # Write to a sibling file then atomically replace, so a half-written
+    # workbook never appears at the canonical path.
+    tmp = path.with_suffix(path.suffix + ".tmp")
     try:
-        wb = load_workbook(path)
-    except (InvalidFileException, PermissionError) as exc:
-        logger.warning("Step 3: cannot open %s (%s). Skipping Excel rebuild.", path, exc)
+        wb.save(tmp)
+    except PermissionError:
+        logger.warning(
+            "Could not save %s — is it open in Excel? Close and re-run.", tmp
+        )
         return False
 
-    mutated = False
+    try:
+        tmp.replace(path)
+    except PermissionError:
+        logger.warning(
+            "Could not replace %s with rebuilt file — close it in Excel and re-run.", path
+        )
+        return False
 
-    # 3a. Rename legacy tabs.
-    for old, new in LEGACY_TAB_RENAMES.items():
-        if old != new and old in wb.sheetnames and new not in wb.sheetnames:
-            logger.info("Renaming Excel tab %r -> %r", old, new)
-            wb[old].title = new
-            mutated = True
+    logger.info(
+        "Excel rebuilt from scratch: %s -> 4 tabs, 13 cols, no data rows.",
+        path,
+    )
 
-    # 3b. Add any missing managed tabs (so all four exist before wiping).
-    for tab in TAB_ORDER:
-        if tab not in wb.sheetnames:
-            logger.info("Adding missing Excel tab %r", tab)
-            wb.create_sheet(title=tab)
-            mutated = True
-
-    # 3c. **Delete** every tab that isn't one of the four managed ones.
-    #     This is the load-bearing change: previous runs left ghosts like
-    #     "Tasks From WhatsApp1" and the un-renamed legacy tabs hanging
-    #     around. We want exactly TAB_ORDER and nothing else.
-    managed = set(TAB_ORDER)
-    for sheet_name in list(wb.sheetnames):
-        if sheet_name not in managed:
-            logger.info("Removing non-managed Excel tab %r", sheet_name)
-            del wb[sheet_name]
-            mutated = True
-
-    # 3d. For each managed tab: heal headers (insert blank cols where the
-    #     legacy schema is detected) then wipe every data row, leaving only
-    #     the header row.
-    for tab in TAB_ORDER:
-        ws = wb[tab]
-        header = [ws.cell(1, c).value for c in range(1, max(ws.max_column, len(HEADERS)) + 1)]
-        # Heal column shape if needed.
-        for legacy_header, insert_at in LEGACY_SCHEMAS:
-            if header[: len(legacy_header)] == legacy_header:
-                logger.info(
-                    "Tab %r on legacy %d-col schema; inserting %d blank col(s).",
-                    tab, len(legacy_header), len(insert_at),
-                )
-                for idx in sorted(insert_at):
-                    ws.insert_cols(idx + 1)
-                break
-        # Rewrite header row to the canonical HEADERS regardless.
-        for col, value in enumerate(HEADERS, start=1):
-            ws.cell(row=1, column=col, value=value)
-        # Wipe trailing columns past HEADERS.
-        for c in range(ws.max_column, len(HEADERS), -1):
-            ws.cell(row=1, column=c).value = None
-        # Wipe every data row (rows 2..end).
-        if ws.max_row >= 2:
-            ws.delete_rows(2, ws.max_row - 1)
-        mutated = True
-
-    # 3e. Reorder to canonical order.
-    wb._sheets = [wb[t] for t in TAB_ORDER]  # type: ignore[attr-defined]
-
-    if mutated:
-        try:
-            wb.save(path)
-            logger.info("Excel rebuilt: %s now on canonical 4-tab / 13-col layout.", path)
-        except PermissionError:
-            logger.warning(
-                "Could not save %s — close it in Excel and re-run the migration.", path
-            )
-            return False
-
-    # Reset the singleton flag so subsequent imports re-bootstrap.
+    # Reset the singleton flag so any subsequent ExcelMirror call sees the
+    # new file rather than its cached "initialised" view.
     ExcelMirror._initialised = False  # type: ignore[attr-defined]
     return True
 
