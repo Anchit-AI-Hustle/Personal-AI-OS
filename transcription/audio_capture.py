@@ -4,6 +4,21 @@ Microphone capture.
 A background thread continuously reads frames from the default input
 device using `sounddevice`. Every `AUDIO_CHUNK_MINUTES` minutes the
 accumulated audio is flushed to a WAV file and handed to a callback.
+
+Silence handling:
+  Whisper hallucinates phrases like "Thank you" repeatedly when fed
+  pure silence (a known training-data artifact). To prevent dead-mic
+  output from polluting the DB:
+
+    1. On startup, a 1-second probe records from the configured input
+       device. If peak amplitude is effectively zero, we log a loud
+       warning so the user knows their mic is muted / privacy-blocked
+       BEFORE chunks start accumulating with garbage transcripts.
+
+    2. Per chunk, if the peak amplitude is below `_SILENCE_PEAK_THRESHOLD`,
+       we still write the WAV (for forensic replay) but mark the chunk
+       as "silent" so the downstream pipeline can skip transcription
+       entirely.
 """
 from __future__ import annotations
 
@@ -25,6 +40,13 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+# Below this peak amplitude (float32 in [-1, 1]) we treat the chunk as
+# silence. 0.005 is conservative: normal speech 30cm from a laptop mic
+# peaks around 0.1–0.5; pure noise floor is < 0.001; muted-mic digital
+# silence is exactly 0.0.
+_SILENCE_PEAK_THRESHOLD = 0.005
+
+
 @dataclass
 class AudioChunk:
     session_id: str
@@ -34,6 +56,8 @@ class AudioChunk:
     sample_rate: int
     audio_path: Path
     duration_seconds: float
+    is_silent: bool = False    # peak amplitude below _SILENCE_PEAK_THRESHOLD
+    peak_amplitude: float = 0.0
 
 
 OnChunk = Callable[[AudioChunk], None]
@@ -92,6 +116,11 @@ class AudioCapture(threading.Thread):
             logger.info("Meeting capture disabled by config — AudioCapture exiting.")
             return
 
+        # Startup health check: confirm the configured input device is
+        # actually producing signal. Loudly warns on a mute/privacy
+        # block so the user fixes it before chunks fill with garbage.
+        self._probe_mic_health()
+
         backoff = 2.0
         max_backoff = 60.0
 
@@ -128,6 +157,59 @@ class AudioCapture(threading.Thread):
                 self._frames_queue.get_nowait()
         except queue.Empty:
             pass
+
+    def _probe_mic_health(self) -> None:
+        """
+        Record 1 second from the configured device and measure peak
+        amplitude. If it's effectively zero, log a HUGE warning — this
+        almost always means the mic is hardware-muted, blocked by
+        Windows privacy settings, or the wrong device is selected.
+
+        Never raises — failure here is non-fatal; the main record loop
+        will start anyway and Whisper will tell us nothing useful but
+        the process keeps running.
+        """
+        try:
+            data = sd.rec(
+                int(self._sample_rate * 1.0),
+                samplerate=self._sample_rate,
+                channels=self._channels,
+                dtype="float32",
+                device=self._device,
+            )
+            sd.wait()
+            peak = float(np.max(np.abs(data))) if data.size else 0.0
+        except Exception as exc:
+            logger.warning("Mic health probe failed: %s", exc)
+            return
+
+        if peak < _SILENCE_PEAK_THRESHOLD:
+            logger.error(
+                "==================================================================\n"
+                "  MIC HEALTH WARNING — input device %r produced ZERO signal.\n"
+                "  Peak amplitude over 1s probe: %.6f (silence floor).\n"
+                "\n"
+                "  Whisper hallucinates 'Thank you' repeatedly on silent input,\n"
+                "  filling the DB with garbage transcripts. Likely causes:\n"
+                "    * Windows mic privacy blocking this app\n"
+                "        (Settings -> Privacy & security -> Microphone)\n"
+                "    * Hardware mute key pressed (often F4 on Dell/Lenovo)\n"
+                "    * Wrong input device selected — check available devices and\n"
+                "      set AUDIO_INPUT_DEVICE in .env to the correct index/name\n"
+                "    * Bluetooth headset disconnected, falling back to silent input\n"
+                "\n"
+                "  Audio chunks WILL still be recorded but flagged as silent and\n"
+                "  skipped by the transcription pipeline until you fix this.\n"
+                "==================================================================",
+                self._device if self._device is not None else "<system default>",
+                peak,
+            )
+        else:
+            logger.info(
+                "Mic health probe OK: device=%r peak=%.4f over 1s.",
+                self._device if self._device is not None else "<system default>",
+                peak,
+            )
 
     # --- internals -----------------------------------------------------------
 
@@ -199,6 +281,11 @@ class AudioCapture(threading.Thread):
         idx = self._chunk_index
         self._chunk_index += 1
 
+        # Peak amplitude — used by the consumer (meeting_service) to
+        # decide whether to skip transcription on a silent chunk.
+        peak = float(np.max(np.abs(audio))) if audio.size else 0.0
+        is_silent = peak < _SILENCE_PEAK_THRESHOLD
+
         filename = f"{self.session_id}_chunk_{idx:04d}.wav"
         path = self._output_dir / filename
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,9 +296,17 @@ class AudioCapture(threading.Thread):
             logger.exception("Failed to persist audio chunk %s", path)
             return
 
-        logger.info(
-            "Flushed audio chunk %d (%.1fs) -> %s", idx, duration, path.name
-        )
+        if is_silent:
+            logger.info(
+                "Flushed SILENT audio chunk %d (%.1fs, peak=%.5f) -> %s "
+                "[will be skipped by transcription]",
+                idx, duration, peak, path.name,
+            )
+        else:
+            logger.info(
+                "Flushed audio chunk %d (%.1fs, peak=%.3f) -> %s",
+                idx, duration, peak, path.name,
+            )
 
         chunk = AudioChunk(
             session_id=self.session_id,
@@ -221,6 +316,8 @@ class AudioCapture(threading.Thread):
             sample_rate=self._sample_rate,
             audio_path=path,
             duration_seconds=duration,
+            is_silent=is_silent,
+            peak_amplitude=peak,
         )
         try:
             self._on_chunk(chunk)
