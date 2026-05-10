@@ -31,21 +31,63 @@ SYNC_INTERVAL_SECONDS = 30
 BATCH_SIZE = 50
 
 
+def _ordinal_suffix(day: int) -> str:
+    """1 -> 'st', 2 -> 'nd', 3 -> 'rd', 4..20 -> 'th', etc."""
+    if 11 <= (day % 100) <= 13:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+
+
 def _format_iso_timestamp(value: Optional[str]) -> str:
     """
-    Trim a stored ISO 8601 timestamp ("2026-05-08T22:19:22.697869+00:00")
-    to a sheet-friendly "2026-05-08 22:19" form. Anything that isn't ISO-
-    shaped (RFC 5322 email dates, plain dates, free-form strings) passes
-    through untouched so deadlines like "by the weekend" still display.
+    Render a stored ISO 8601 timestamp ("2026-05-08T22:19:22.697869+00:00")
+    as a human-friendly string ("9th May 2026, 3:49 AM") in the user's
+    local timezone.
+
+    Behaviour:
+      - ISO with tzinfo  -> converted to local timezone, formatted with
+                            day-ordinal, full month name, year, 12-hour
+                            time with AM/PM
+      - ISO date-only    -> "26th May 2026" (no time, since none was given)
+      - Naive ISO        -> assumed local, formatted in full
+      - Anything else    -> passed through untouched (so deadlines like
+                            "by the weekend", "ASAP" still display correctly)
     """
+    from datetime import datetime as _datetime
+
     if not value:
         return ""
     s = str(value).strip()
-    # Only trim things that look like ISO 8601: starts with YYYY-MM-DDT.
-    if len(s) >= 16 and s[4] == "-" and s[7] == "-" and s[10] in ("T", " "):
-        # Cut off at minute precision; replace 'T' with space.
-        return s[:16].replace("T", " ")
-    return s
+    if not s:
+        return ""
+
+    # Detect "date-only" form: YYYY-MM-DD with nothing after.
+    date_only = len(s) == 10 and s[4] == "-" and s[7] == "-"
+
+    try:
+        dt = _datetime.fromisoformat(s)
+    except ValueError:
+        # Not ISO 8601 — leave untouched (covers "by the weekend",
+        # "ASAP", "Tuesday", RFC 5322 dates, etc.).
+        return s
+
+    # If the timestamp carries a timezone, render it in local time so
+    # "Task Given On" matches the user's wall clock. Naive timestamps
+    # are assumed to already be local-ish — display as-is.
+    if dt.tzinfo is not None:
+        dt = dt.astimezone()
+
+    day = dt.day
+    suffix = _ordinal_suffix(day)
+    month = dt.strftime("%B")          # "May"
+    year = dt.year
+
+    if date_only:
+        return f"{day}{suffix} {month} {year}"
+
+    hour12 = dt.hour % 12 or 12
+    ampm = "AM" if dt.hour < 12 else "PM"
+    return f"{day}{suffix} {month} {year}, {hour12}:{dt.minute:02d} {ampm}"
 
 
 def _format_source_label(*, source_type: str, source_detail: str) -> str:
