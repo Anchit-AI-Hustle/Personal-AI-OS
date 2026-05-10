@@ -187,6 +187,10 @@ def main() -> int:
         print(f"Cleaned + headered: {tab!r}")
 
     # 7. Bold + freeze + light-grey-fill row 1 across all 4 tabs.
+    #    Also force "Task Given On" (col F = index 5) and "Task Deadline"
+    #    (col L = index 11) to PLAIN TEXT format so Google Sheets never
+    #    auto-parses our pretty date strings ("9th May 2026, 3:49 AM")
+    #    or — worse — interprets "2026-05-08 22:19" as a date serial.
     meta = client._fetch_meta()  # noqa: SLF001
     title_to_id = {
         s["properties"]["title"]: s["properties"]["sheetId"]
@@ -199,6 +203,7 @@ def main() -> int:
             continue
         style_requests.extend(
             [
+                # Header styling.
                 {
                     "repeatCell": {
                         "range": {
@@ -219,6 +224,7 @@ def main() -> int:
                         "fields": "userEnteredFormat(textFormat,backgroundColor)",
                     }
                 },
+                # Freeze header row.
                 {
                     "updateSheetProperties": {
                         "properties": {
@@ -226,6 +232,40 @@ def main() -> int:
                             "gridProperties": {"frozenRowCount": 1},
                         },
                         "fields": "gridProperties.frozenRowCount",
+                    }
+                },
+                # Plain-text format for Task Given On (col F, idx 5).
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": gid,
+                            "startRowIndex": 1,
+                            "startColumnIndex": 5,
+                            "endColumnIndex": 6,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "TEXT"}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                },
+                # Plain-text format for Task Deadline (col L, idx 11).
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": gid,
+                            "startRowIndex": 1,
+                            "startColumnIndex": 11,
+                            "endColumnIndex": 12,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "TEXT"}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
                     }
                 },
             ]
