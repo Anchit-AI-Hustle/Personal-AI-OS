@@ -35,6 +35,20 @@ class MeetingService:
         # 1. Make sure the session exists.
         self._db.start_meeting_session(chunk.session_id)
 
+        # 1b. Skip silent chunks before they hit Whisper. Whisper hallucinates
+        #     "Thank you" / "Thanks for watching" on pure silence; sending
+        #     dead-mic audio through it just pollutes the DB. The capture
+        #     layer flags chunks whose peak amplitude is below the silence
+        #     threshold (default 0.005).
+        if getattr(chunk, "is_silent", False):
+            logger.info(
+                "Chunk %d/%s is silent (peak=%.5f); skipping transcription + AI.",
+                chunk.chunk_index,
+                chunk.session_id,
+                getattr(chunk, "peak_amplitude", 0.0),
+            )
+            return
+
         # 2. Transcribe.
         try:
             transcription = self._whisper.transcribe_file(chunk.audio_path)
