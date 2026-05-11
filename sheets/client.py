@@ -13,10 +13,10 @@ future status updates can patch both rows.
 Column layout (identical in all three tabs):
     A  Task Heading
     B  Task Description     (always includes context: project / topic / customer)
-    C  Status               (open | done | dropped)
-    D  Source               (e.g. "Email | from Aman <aman@vahdam.com>")
-    E  Source Link          (deep-link to the originating message/thread/session)
-    F  Task Given On        (ISO 8601 — date+time the task was assigned/discussed)
+    C  Task Given On        (pretty date — "12th May 2026, 2:16 AM")
+    D  Status               (open | done | dropped)
+    E  Source               (e.g. "Email from Aman", "Voice memo")
+    F  Source Link          (deep-link to the originating message/thread/session)
     G  Why We're Doing This (the rationale / business reason)
     H  Growth Pillar        (Operations | Retention | Acquisition | ... | Other)
     I  SPOC                 (the person responsible — sender or speaker)
@@ -28,8 +28,8 @@ Column layout (identical in all three tabs):
     O  _iso_sort_key        (raw ISO timestamp; HIDDEN on Sheet & Excel —
                               never visible to the user. Used solely as
                               the sort-by column so the live Sheet stays
-                              DESC chronologically. Pretty "9th May..."
-                              strings in col F can't be sorted.)
+                              DESC chronologically. Pretty dates in col C
+                              can't be sorted alphabetically.)
 """
 from __future__ import annotations
 
@@ -80,16 +80,16 @@ LEGACY_TAB_RENAMES: dict[str, str] = {
 HEADERS: list[str] = [
     "Task Heading",       # A
     "Task Description",   # B
-    "Status",             # C
-    "Source",             # D
-    "Source Link",        # E
-    "Task Given On",      # F  (renamed from "Date Given" -> "Task Given At" -> "Task Given On")
+    "Task Given On",      # C  (moved up so the date is right next to the description)
+    "Status",             # D  (was C)
+    "Source",             # E  (was D)
+    "Source Link",        # F  (was E)
     "Why We're Doing This",  # G
     "Growth Pillar",      # H
     "SPOC",               # I
     "SPOC Contact",       # J
     "Priority",           # K
-    "Task Deadline",      # L  (renamed from "Go Live")
+    "Task Deadline",      # L
     "All Updates",        # M  (chronological log of follow-ups across sources)
     "Remarks",            # N
     "_iso_sort_key",      # O  HIDDEN — raw ISO timestamp, sole sort key
@@ -104,7 +104,8 @@ SORT_KEY_COL_INDEX = 15            # 1-based
 SORT_KEY_COL_LETTER = "O"
 
 # Status column letter — used by update_status. If HEADERS shifts, change here.
-STATUS_COL_LETTER = "C"
+# (Status moved from C to D when "Task Given On" was promoted to col C.)
+STATUS_COL_LETTER = "D"
 
 # Known prior schemas. Self-heal logic detects these by header-row equality
 # and migrates the worksheet onto the current HEADERS layout.

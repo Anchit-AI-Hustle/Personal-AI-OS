@@ -263,10 +263,10 @@ For the SPOC Contact column:
 |---|---|---|---|
 | A | Task Heading | `task` | Imperative, ≤70 chars |
 | B | Task Description | `task_description` | One sentence, ≤180 chars, context-first |
-| C | Status | `status` | `open` / `done` / `dropped` |
-| D | Source | derived | "Email from X" / "Google Chat with X" / "In-person meeting (X)" |
-| E | Source Link | `source_link` | Direct URL to original Gmail thread or Chat space |
-| F | Task Given On | `date_given` formatted | Pretty: "11th May 2026, 11:09 PM" (local TZ) |
+| C | Task Given On | `date_given` formatted | Pretty: "12th May 2026, 2:16 AM" (local TZ) |
+| D | Status | `status` | `open` / `done` / `dropped` |
+| E | Source | derived | "Email from X" / "Google Chat with X" / "Voice memo" |
+| F | Source Link | `source_link` | Direct URL to original Gmail thread or Chat space |
 | G | Why We're Doing This | `rationale` | One sentence, tied to a Vahdam growth lever |
 | H | Growth Pillar | `growth_pillar` | One of 10 fixed enum values |
 | I | SPOC | `sender_or_speaker` | Real name only (no `users/...`) |

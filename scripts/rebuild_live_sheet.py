@@ -235,14 +235,14 @@ def main() -> int:
                         "fields": "gridProperties.frozenRowCount",
                     }
                 },
-                # Plain-text format for Task Given On (col F, idx 5).
+                # Plain-text format for Task Given On (col C, idx 2).
                 {
                     "repeatCell": {
                         "range": {
                             "sheetId": gid,
                             "startRowIndex": 1,
-                            "startColumnIndex": 5,
-                            "endColumnIndex": 6,
+                            "startColumnIndex": 2,
+                            "endColumnIndex": 3,
                         },
                         "cell": {
                             "userEnteredFormat": {
@@ -356,7 +356,7 @@ def main() -> int:
             }
         )
 
-        # Row-level rules driven by Status column (C, idx 2).
+        # Row-level rules driven by Status column (D, idx 3).
         # "done"   -> light green row + strike-through
         # "dropped"-> light grey row + strike-through
         for status_val, fill, strike in [
@@ -377,7 +377,7 @@ def main() -> int:
                                 "condition": {
                                     "type": "CUSTOM_FORMULA",
                                     "values": [
-                                        {"userEnteredValue": f'=LOWER($C2)="{status_val}"'}
+                                        {"userEnteredValue": f'=LOWER($D2)="{status_val}"'}
                                     ],
                                 },
                                 "format": {
