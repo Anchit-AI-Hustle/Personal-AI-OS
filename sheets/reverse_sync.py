@@ -61,11 +61,11 @@ logger = get_logger(__name__)
 
 REVERSE_SYNC_INTERVAL_SECONDS = 60
 
-# 1-based indices in the visible 14-column layout (HEADERS in
+# 0-based indices in the visible 14-column layout (HEADERS in
 # sheets/client.py). Kept here as constants so a future header
 # reordering only needs one place to update.
 _COL_HEADING = 0   # A
-_COL_STATUS = 2    # C
+_COL_STATUS = 3    # D  (was C; moved when "Task Given On" was promoted to C)
 _COL_SPOC = 8      # I
 
 _VALID_STATUSES = {"open", "done", "dropped"}

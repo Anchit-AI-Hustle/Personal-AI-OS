@@ -145,12 +145,13 @@ def _format_source_label(*, source_type: str, source_detail: str) -> str:
 
 def _row_for_task(task) -> list[str]:
     """
-    Map a DB row to the 14-column sheet shape.
+    Map a DB row to the 15-column sheet shape (14 visible + 1 hidden).
 
     Column order (matches HEADERS in sheets/client.py):
-      Task Heading | Task Description | Status | Source | Source Link |
-      Task Given On | Why We're Doing This | Growth Pillar | SPOC |
-      SPOC Contact | Priority | Task Deadline | All Updates | Remarks
+      Task Heading | Task Description | Task Given On | Status | Source |
+      Source Link | Why We're Doing This | Growth Pillar | SPOC |
+      SPOC Contact | Priority | Task Deadline | All Updates | Remarks |
+      _iso_sort_key (hidden)
     """
     # `task` is a sqlite3.Row; .keys() lets us tolerate older rows that
     # predate the migration columns.
@@ -181,21 +182,21 @@ def _row_for_task(task) -> list[str]:
     sort_key = date_given or get("created_at") or ""
 
     return [
-        get("task"),                                   # Task Heading
-        get("task_description"),                       # Task Description
-        get("status") or "open",                       # Status
-        source_label,                                  # Source
-        get("source_link"),                            # Source Link
-        _format_iso_timestamp(date_given),             # Task Given On
-        get("rationale"),                              # Why We're Doing This
-        get("growth_pillar") or "Other",               # Growth Pillar
-        get("sender_or_speaker"),                      # SPOC
-        get("spoc_contact"),                           # SPOC Contact
-        get("urgency") or "Medium",                    # Priority
-        _format_iso_timestamp(get("deadline")),        # Task Deadline
-        get("all_updates"),                            # All Updates (chronological)
-        "",                                            # Remarks (left blank for human use)
-        sort_key,                                      # _iso_sort_key (hidden)
+        get("task"),                                   # A Task Heading
+        get("task_description"),                       # B Task Description
+        _format_iso_timestamp(date_given),             # C Task Given On
+        get("status") or "open",                       # D Status
+        source_label,                                  # E Source
+        get("source_link"),                            # F Source Link
+        get("rationale"),                              # G Why We're Doing This
+        get("growth_pillar") or "Other",               # H Growth Pillar
+        get("sender_or_speaker"),                      # I SPOC
+        get("spoc_contact"),                           # J SPOC Contact
+        get("urgency") or "Medium",                    # K Priority
+        _format_iso_timestamp(get("deadline")),        # L Task Deadline
+        get("all_updates"),                            # M All Updates (chronological)
+        "",                                            # N Remarks (left blank for human use)
+        sort_key,                                      # O _iso_sort_key (hidden)
     ]
 
 

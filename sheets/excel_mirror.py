@@ -19,7 +19,6 @@ update method.
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -46,10 +45,10 @@ def _column_widths() -> dict[str, int]:
     return {
         "A": 36,  # Task Heading
         "B": 60,  # Task Description
-        "C": 12,  # Status
-        "D": 28,  # Source (Email | Chat | Meeting + detail)
-        "E": 32,  # Source Link
-        "F": 22,  # Task Given On
+        "C": 22,  # Task Given On (pretty date string)
+        "D": 12,  # Status
+        "E": 28,  # Source (Email from X / Voice memo / Google Chat)
+        "F": 32,  # Source Link
         "G": 50,  # Why We're Doing This
         "H": 18,  # Growth Pillar
         "I": 22,  # SPOC
