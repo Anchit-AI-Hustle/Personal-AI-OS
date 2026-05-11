@@ -58,6 +58,10 @@ def _column_widths() -> dict[str, int]:
         "L": 18,  # Task Deadline
         "M": 60,  # All Updates (chronological log)
         "N": 30,  # Remarks
+        # Column O is the hidden _iso_sort_key — never visible to the
+        # user. We don't give it a width because we explicitly mark it
+        # hidden via `column_dimensions['O'].hidden = True` in
+        # _write_header below.
     }
 
 
@@ -248,6 +252,14 @@ class ExcelMirror:
             cell.alignment = _HEADER_ALIGN
         for letter, width in _column_widths().items():
             ws.column_dimensions[letter].width = width
+        # Hide the _iso_sort_key column (col O, the 15th). It exists
+        # only so we can sort tabs chronologically; the user never
+        # sees it. We compute the letter from len(HEADERS) so this
+        # automatically tracks future column additions.
+        from openpyxl.utils import get_column_letter as _gcl
+        sort_col_letter = _gcl(len(HEADERS))
+        ws.column_dimensions[sort_col_letter].hidden = True
+        ws.column_dimensions[sort_col_letter].width = 0.01  # belt + suspenders
         ws.freeze_panes = "A2"
 
 

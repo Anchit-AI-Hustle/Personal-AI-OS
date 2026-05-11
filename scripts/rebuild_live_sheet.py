@@ -33,6 +33,7 @@ from config import settings  # noqa: E402
 from sheets.client import (  # noqa: E402
     HEADERS,
     LEGACY_TAB_RENAMES,
+    SORT_KEY_COL_INDEX,
     TAB_ORDER,
     get_sheets_client,
 )
@@ -266,6 +267,21 @@ def main() -> int:
                             }
                         },
                         "fields": "userEnteredFormat.numberFormat",
+                    }
+                },
+                # HIDE the _iso_sort_key column (col O, idx 14).
+                # It exists purely so Sheets can chronologically sort
+                # the tab. The user should never see it.
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": gid,
+                            "dimension": "COLUMNS",
+                            "startIndex": SORT_KEY_COL_INDEX - 1,
+                            "endIndex": SORT_KEY_COL_INDEX,
+                        },
+                        "properties": {"hiddenByUser": True},
+                        "fields": "hiddenByUser",
                     }
                 },
             ]

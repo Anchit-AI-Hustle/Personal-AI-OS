@@ -7,19 +7,33 @@ manually edits the Status column on the sheet, that change needs to
 flow back into `extracted_tasks.status` so the daily digest, the chat
 poller, and any future surfaces see the updated state.
 
-Scope (Phase 2):
+Scope:
   - Status column only. Other columns (description, deadline, etc.) are
     intentionally NOT round-tripped — the sheet is the user's working
     surface for those, the DB doesn't need them.
-  - "All Tasks" tab is the canonical surface to read from. Each task
-    row's `sheet_row_all` is the index we look up by.
+  - "Master Task List" is the canonical surface to read from.
+
+Lookup strategy (post sort-key column):
+  The forward sync now re-sorts each tab DESC by hidden col O after
+  every push, which makes `sheet_row_all` mappings stale every minute.
+  So we no longer look up tasks by row index. Instead:
+
+    1. Read columns A (heading), I (SPOC), C (status) in a single API
+       call from the Master tab.
+    2. For each row, compute `(normalized_heading, lowercase SPOC)` —
+       the same key TaskService uses for merge-dedup.
+    3. Match against open tasks in the DB by that key.
+    4. If the sheet status differs from the DB, update the DB.
+
+  This is robust to row-position changes (sorts, manual reordering,
+  inserts) and to the user adding handwritten rows that don't map to
+  any DB row (those just won't match and get skipped).
 
 Failure modes:
   - Sheet API outage: log warning, retry next cycle.
-  - Status value the sheet contains isn't one of the allowed enum values:
-    snap to the closest match, log if we couldn't.
-  - Task not found in DB for a given row: skip silently. (Probably a
-    row the user added by hand — those don't have a DB counterpart.)
+  - Status value the sheet contains isn't a recognised enum: snap to
+    closest match, otherwise skip with a logged note.
+  - Sheet row whose heading doesn't match any DB task: skipped silently.
 """
 from __future__ import annotations
 
@@ -31,19 +45,28 @@ from googleapiclient.errors import HttpError
 
 from config import settings
 from database import get_db
+from services.task_service import normalize_heading
+from utils.identifiers import clean_identifier
 from utils.logger import get_logger
 from utils.retry import retry_call
 
 from .client import (
     SheetsClient,
-    STATUS_COL_LETTER,
     TAB_ALL_TASKS,
+    USER_VISIBLE_COLS,
     get_sheets_client,
 )
 
 logger = get_logger(__name__)
 
 REVERSE_SYNC_INTERVAL_SECONDS = 60
+
+# 1-based indices in the visible 14-column layout (HEADERS in
+# sheets/client.py). Kept here as constants so a future header
+# reordering only needs one place to update.
+_COL_HEADING = 0   # A
+_COL_STATUS = 2    # C
+_COL_SPOC = 8      # I
 
 _VALID_STATUSES = {"open", "done", "dropped"}
 _STATUS_ALIASES = {
@@ -79,12 +102,22 @@ def _normalise_status(raw: Optional[str]) -> Optional[str]:
     return _STATUS_ALIASES.get(s)
 
 
+def _col_letter(n: int) -> str:
+    """1-based column index -> A1 letter."""
+    result = ""
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        result = chr(ord("A") + rem) + result
+    return result
+
+
 class ReverseSyncWorker(threading.Thread):
     """
-    Periodically reads the Status column of the "All Tasks" tab and
-    updates the DB for any row whose status was edited by the user.
+    Periodically reads the visible columns of "Master Task List" and
+    updates the DB for any task whose status was edited by the user.
 
     Idempotent: if the sheet status already matches the DB, no write.
+    Robust to row-position changes after sort operations.
     """
 
     def __init__(
@@ -121,28 +154,16 @@ class ReverseSyncWorker(threading.Thread):
 
     def poll_once(self) -> int:
         """
-        Read the Status column for every synced task, compare to DB,
-        update DB rows whose sheet status has changed. Returns the
-        number of DB rows updated this cycle.
+        Read every visible row of Master Task List, match by
+        (normalized_heading, SPOC) to an open DB task, update DB
+        rows whose sheet status has changed. Returns the number
+        of DB rows updated this cycle.
         """
-        # Pull every task that has a row index on "All Tasks" — those are
-        # the ones the user can edit. Unsynced / never-synced rows are
-        # skipped (they have no row to read).
-        rows = self._db.fetchall(
-            """
-            SELECT id, sheet_row_all, status
-              FROM extracted_tasks
-             WHERE sheet_row_all IS NOT NULL
-            """
-        )
-        if not rows:
-            return 0
-
-        # Read the entire Status column once. Rows in `extracted_tasks`
-        # may point at row N up to the current end of the sheet — pull
-        # the column at maximum needed depth in a single API call.
-        max_row = max(r["sheet_row_all"] for r in rows)
-        rng = f"'{TAB_ALL_TASKS}'!{STATUS_COL_LETTER}2:{STATUS_COL_LETTER}{max_row}"
+        # Read the entire user-visible part of the Master tab in a
+        # single API call. We deliberately exclude the hidden sort-key
+        # column O — its raw ISO contents aren't useful here.
+        end_col = _col_letter(USER_VISIBLE_COLS)
+        rng = f"'{TAB_ALL_TASKS}'!A2:{end_col}"
 
         def _read() -> list:
             resp = (
@@ -154,72 +175,88 @@ class ReverseSyncWorker(threading.Thread):
             return resp.get("values") or []
 
         try:
-            values = retry_call(
+            sheet_rows = retry_call(
                 _read, attempts=3, exceptions=(HttpError, TimeoutError)
             )
         except HttpError as exc:
-            # 400 "Unable to parse range" means the tab name in our
-            # constant doesn't exist on the live Sheet (e.g. the user
-            # renamed/deleted it, or this Python process is still
-            # holding a stale TAB_ALL_TASKS value because main.py was
-            # started before a tab-rename migration). Logging "exception"
-            # for this would spew a huge traceback every minute. Treat
-            # it as a soft skip with a one-line warning.
             status = getattr(exc.resp, "status", None) if exc.resp else None
             if status in (400, 404):
                 logger.warning(
-                    "Reverse sync: cannot read %r — tab not found on the "
-                    "Sheet. Skipping this cycle. If you just renamed/created "
-                    "tabs, restart main.py so the new TAB_ALL_TASKS value "
-                    "is loaded.",
-                    f"{TAB_ALL_TASKS}!{STATUS_COL_LETTER}",
+                    "Reverse sync: cannot read tab %r — not found on the Sheet. "
+                    "Skipping this cycle.",
+                    TAB_ALL_TASKS,
                 )
                 return 0
-            logger.exception("Reverse sync: HTTP error reading status column.")
+            logger.exception("Reverse sync: HTTP error reading Master tab.")
             return 0
         except Exception:
-            logger.exception("Reverse sync: could not read status column.")
+            logger.exception("Reverse sync: could not read Master tab.")
             return 0
 
-        # values is a list of single-element lists, one per row, indexed
-        # from sheet row 2 -> values[0]. Build a {row_number: cell_value}
-        # so missing/empty cells are tolerated.
-        status_by_row: dict[int, str] = {}
-        for offset, row in enumerate(values):
-            if not row:
-                continue
-            cell = row[0] if row else ""
-            status_by_row[offset + 2] = cell  # +2 because we read from row 2
+        if not sheet_rows:
+            return 0
+
+        # Build an index of open DB tasks keyed on (normalized_heading,
+        # spoc_lower). One key may legitimately have one row at most —
+        # TaskService dedup enforces it.
+        db_index: dict[tuple[str, str], dict] = {}
+        for r in self._db.fetchall(
+            "SELECT id, task, normalized_heading, sender_or_speaker, status "
+            "FROM extracted_tasks WHERE status = 'open'"
+        ):
+            norm = (r["normalized_heading"] or "").lower()
+            if not norm:
+                # Fall back to deriving it now if the column was never
+                # populated (very old rows). Doesn't mutate the DB —
+                # just used for this lookup.
+                norm = normalize_heading(r["task"] or "").lower()
+            spoc_lc = (clean_identifier(r["sender_or_speaker"]) or "").lower()
+            db_index[(norm, spoc_lc)] = dict(r)
 
         updates = 0
         unknown_values: set[str] = set()
+        misses = 0
 
-        for r in rows:
-            row_idx = r["sheet_row_all"]
-            sheet_raw = status_by_row.get(row_idx, "")
-            sheet_status = _normalise_status(sheet_raw)
-            if sheet_status is None:
-                if sheet_raw and sheet_raw.strip():
-                    unknown_values.add(sheet_raw.strip())
+        for row in sheet_rows:
+            heading = row[_COL_HEADING] if len(row) > _COL_HEADING else ""
+            sheet_status = row[_COL_STATUS] if len(row) > _COL_STATUS else ""
+            spoc = row[_COL_SPOC] if len(row) > _COL_SPOC else ""
+
+            heading = (heading or "").strip()
+            if not heading:
                 continue
-            if sheet_status == r["status"]:
+
+            key = (
+                normalize_heading(heading).lower(),
+                (clean_identifier(spoc) or "").lower(),
+            )
+            task = db_index.get(key)
+            if task is None:
+                misses += 1
+                continue
+
+            normalised = _normalise_status(sheet_status)
+            if normalised is None:
+                if sheet_status and sheet_status.strip():
+                    unknown_values.add(sheet_status.strip())
+                continue
+            if normalised == task["status"]:
                 continue
 
             try:
-                self._db.update_task_status(r["id"], sheet_status)
+                self._db.update_task_status(int(task["id"]), normalised)
                 updates += 1
                 logger.info(
-                    "Reverse sync: task id=%d status %r -> %r (row %d)",
-                    r["id"],
-                    r["status"],
-                    sheet_status,
-                    row_idx,
+                    "Reverse sync: task id=%d (%r) status %r -> %r",
+                    task["id"],
+                    heading,
+                    task["status"],
+                    normalised,
                 )
             except ValueError:
-                # update_task_status enforces the enum; should not happen
-                # because _normalise_status already snapped to an enum value.
                 logger.debug(
-                    "Reverse sync: rejected status %r for task %d", sheet_status, r["id"]
+                    "Reverse sync: rejected status %r for task id=%d",
+                    normalised, task["id"],
                 )
 
         if unknown_values:
@@ -228,6 +265,14 @@ class ReverseSyncWorker(threading.Thread):
                 len(unknown_values),
                 sorted(unknown_values),
             )
+        if misses:
+            logger.debug(
+                "Reverse sync: %d sheet row(s) didn't match any open DB task "
+                "(likely manually-added rows or closed tasks).",
+                misses,
+            )
         if updates:
-            logger.info("Reverse sync: %d task status update(s) pulled from Sheet.", updates)
+            logger.info(
+                "Reverse sync: %d task status update(s) pulled from Sheet.", updates
+            )
         return updates
