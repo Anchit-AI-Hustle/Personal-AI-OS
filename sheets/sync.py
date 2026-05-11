@@ -18,7 +18,9 @@ from database import get_db
 from utils.logger import get_logger
 
 from .client import (
+    HEADERS,
     SheetsClient,
+    SORT_KEY_COL_INDEX,
     TAB_ALL_TASKS,
     get_sheets_client,
     source_tab_for,
@@ -180,6 +182,14 @@ def _row_for_task(task) -> list[str]:
     # column existed).
     date_given = get("date_given") or get("created_at")
 
+    # Sort key (col O): raw ISO timestamp so Sheets can sort
+    # chronologically by it (the pretty "9th May..." form in col F
+    # can't be sorted alphabetically into chronological order).
+    # We fall back to created_at when date_given is blank, and to an
+    # empty string when neither is known. Empty strings sort AFTER any
+    # real ISO date in DESC order, so dateless rows end up at the bottom.
+    sort_key = date_given or get("created_at") or ""
+
     return [
         get("task"),                                   # Task Heading
         get("task_description"),                       # Task Description
@@ -195,6 +205,7 @@ def _row_for_task(task) -> list[str]:
         _format_iso_timestamp(get("deadline")),        # Task Deadline
         get("all_updates"),                            # All Updates (chronological)
         "",                                            # Remarks (left blank for human use)
+        sort_key,                                      # _iso_sort_key (hidden)
     ]
 
 
@@ -239,6 +250,8 @@ class SheetsSyncWorker(threading.Thread):
 
     def flush_once(self) -> int:
         rows_pushed = 0
+        touched_tabs: set[str] = set()
+
         while not self._stop.is_set():
             tasks = self._db.unsynced_tasks(limit=self._batch_size)
             if not tasks:
@@ -249,17 +262,26 @@ class SheetsSyncWorker(threading.Thread):
             for t in tasks:
                 buckets[source_tab_for(t["source_type"])].append(t)
 
-            # Flush each bucket independently. Order is irrelevant —
-            # _flush_to_tab dual-writes (source tab + "All Tasks").
-            for bucket in buckets.values():
+            # Flush each bucket independently. _flush_to_tab dual-writes
+            # to the source tab AND to "Master Task List".
+            for tab, bucket in buckets.items():
                 self._flush_to_tab(bucket)
+                touched_tabs.add(tab)
+            touched_tabs.add(TAB_ALL_TASKS)
 
             rows_pushed += len(tasks)
 
             if len(tasks) < self._batch_size:
                 break
 
+        # After all batches in this cycle have been pushed, re-sort each
+        # tab that received rows DESC by the hidden ISO key. One
+        # sortRange API call per touched tab. Re-sorting an already-
+        # sorted tab is a cheap no-op server-side, so this is safe to
+        # run every cycle.
         if rows_pushed:
+            for tab in touched_tabs:
+                self._client.sort_tab_desc_by_sort_key(tab)
             logger.info("Sheets sync: pushed %d task row(s).", rows_pushed)
         return rows_pushed
 

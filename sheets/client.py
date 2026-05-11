@@ -26,6 +26,11 @@ Column layout (identical in all four tabs):
     L  Task Deadline        (when this should ship / be done by)
     M  All Updates          (chronological log of follow-ups across sources)
     N  Remarks              (left blank — for human use)
+    O  _iso_sort_key        (raw ISO timestamp; HIDDEN on Sheet & Excel —
+                              never visible to the user. Used solely as
+                              the sort-by column so the live Sheet stays
+                              DESC chronologically. Pretty "9th May..."
+                              strings in col F can't be sorted.)
 """
 from __future__ import annotations
 
@@ -89,7 +94,16 @@ HEADERS: list[str] = [
     "Task Deadline",      # L  (renamed from "Go Live")
     "All Updates",        # M  (chronological log of follow-ups across sources)
     "Remarks",            # N
+    "_iso_sort_key",      # O  HIDDEN — raw ISO timestamp, sole sort key
 ]
+
+# The number of columns the user actually sees. Used by the rebuild
+# script + reverse-sync to constrain read ranges to the visible area.
+USER_VISIBLE_COLS = 14
+
+# 1-based column index (and A1 letter) of the hidden sort-key column.
+SORT_KEY_COL_INDEX = 15            # 1-based
+SORT_KEY_COL_LETTER = "O"
 
 # Status column letter — used by update_status. If HEADERS shifts, change here.
 STATUS_COL_LETTER = "C"
@@ -152,6 +166,16 @@ LEGACY_SCHEMAS: list[tuple[list[str], list[int]]] = [
             "SPOC Contact", "Priority", "Task Deadline", "Remarks",
         ],
         [12],
+    ),
+    # 14-col schema (with "All Updates" but no hidden _iso_sort_key).
+    # Append the sort key column at the end (index 14).
+    (
+        [
+            "Task Heading", "Task Description", "Status", "Source", "Source Link",
+            "Task Given On", "Why We're Doing This", "Growth Pillar", "SPOC",
+            "SPOC Contact", "Priority", "Task Deadline", "All Updates", "Remarks",
+        ],
+        [14],
     ),
 ]
 
@@ -507,6 +531,53 @@ class SheetsClient:
             first_row,
         )
         return first_row
+
+    def sort_tab_desc_by_sort_key(self, tab: str) -> None:
+        """
+        Sort all data rows in `tab` (everything below row 1) DESCENDING
+        by the hidden `_iso_sort_key` column (col O, dimension index 14).
+
+        Safe to call after every append: if the tab is empty or only has
+        a header row, the API still accepts the request and is a no-op.
+        Failures are logged but never raised — sort is a UX nicety, not
+        load-bearing for data integrity.
+        """
+        # Resolve the tab's sheetId.
+        meta = self._fetch_meta()
+        sheet_gid: Optional[int] = None
+        for s in meta.get("sheets", []):
+            if s["properties"]["title"] == tab:
+                sheet_gid = s["properties"]["sheetId"]
+                break
+        if sheet_gid is None:
+            logger.debug("sort_tab_desc_by_sort_key: tab %r not found.", tab)
+            return
+
+        request = {
+            "sortRange": {
+                "range": {
+                    "sheetId": sheet_gid,
+                    "startRowIndex": 1,                # skip the header
+                    "startColumnIndex": 0,
+                    "endColumnIndex": len(HEADERS),    # 15 columns total
+                },
+                "sortSpecs": [
+                    {
+                        # Dimension index is 0-based; col O = idx 14.
+                        "dimensionIndex": SORT_KEY_COL_INDEX - 1,
+                        "sortOrder": "DESCENDING",
+                    }
+                ],
+            }
+        }
+        try:
+            self._batch_update([request])
+        except Exception:
+            logger.exception(
+                "Failed to sort tab %r by _iso_sort_key (DESC). "
+                "Data is intact; only the sort order is affected.",
+                tab,
+            )
 
     def update_status(self, tab: str, row_number: int, status: str) -> None:
         """Update the Status column of the given 1-based row."""
