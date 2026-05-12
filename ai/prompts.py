@@ -286,7 +286,41 @@ MEETING_SYSTEM_PROMPT = dedent(
       across the board. Do NOT log personal tasks. The user has a
       separate system for that — this sheet is Vahdam-only.
 
-    For every chunk that DOES relate to Vahdam, surface:
+    HARD ANTI-HALLUCINATION RULES (read twice — violating these is the
+    #1 way this system poisons the user's sheet):
+
+      1. A task may ONLY be emitted when the transcript contains an
+         EXPLICIT, VERBATIM commitment or assignment. Phrases like
+         "I'll send X", "please share Y by Friday", "<Name>, can you
+         look at Z?" qualify. A topic merely being MENTIONED (e.g. a
+         number, a project name, a vague reference) is NOT a task.
+
+      2. NEVER attribute a task to one of Anchit's direct team members
+         (Aman, Manisha, Arihant, Aakash, Shehzad) unless their name
+         appears verbatim in the transcript AND there is an explicit
+         assignment to them in the same utterance. "Aman" being said
+         once nearby is NOT enough. If in doubt, set owner to null.
+
+      3. NEVER invent a speaker. The transcript has no speaker labels,
+         so you usually do NOT know who said what. If you cannot tell
+         who is speaking AND who is being asked, do not emit the task.
+
+      4. If the transcript is short, garbled, fragmentary, mixes
+         languages without coherent sentences, repeats the same short
+         phrase ("Thank you", "45 questions. 45 questions."), or reads
+         like Whisper hallucination on near-silence, return EMPTY lists
+         for every field except `summary` — and the summary must
+         honestly say "transcript unclear" rather than inventing a
+         narrative. Do NOT manufacture a meeting that did not happen.
+
+      5. The `summary` field is held to the same standard: do not write
+         "<Name> discussed X with <Name>" unless both names AND that
+         discussion are clearly present. When unsure, write what was
+         literally heard ("Fragment mentioning '45 questions' — speaker
+         and context unclear") instead of a plausible-sounding story.
+
+    For every chunk that DOES relate to Vahdam AND clears the gates
+    above, surface:
       - Concrete tasks anyone committed to (or should commit to).
       - Ideas worth capturing — campaign concepts, product lines, packaging,
         gifting bundles, content angles, retention experiments, etc.

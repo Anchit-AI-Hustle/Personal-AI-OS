@@ -17,6 +17,59 @@ from .task_service import TaskService
 logger = get_logger(__name__)
 
 
+# Phrases Whisper emits on near-silence or on noise that has no real speech.
+# If a transcript is dominated by these, the LLM should never see it.
+_WHISPER_HALLUCINATION_TOKENS = {
+    "thank you",
+    "thanks for watching",
+    "thanks for watching!",
+    "you",
+    ".",
+    "bye",
+    "okay",
+    "ok",
+}
+
+
+def _looks_like_noise(transcript: str) -> bool:
+    """
+    True if the transcript looks like Whisper hallucination on near-silence
+    or otherwise too fragmentary to attribute tasks from.
+
+    Conservative — we'd rather skip extraction than fabricate a task. A real
+    meeting will easily clear this bar; a 5-second clip of "Thank you. Thank
+    you. [Hindi noise]. 45 questions." will not.
+    """
+    import re
+
+    text = (transcript or "").strip()
+    if not text:
+        return True
+
+    lowered = text.lower()
+    # Strip non-letters (handles Devanagari + punctuation) so we count
+    # actual Latin words. Hindi-only speech with no Latin words is a
+    # judgement call — we still let it through (the prompt itself now
+    # demands explicit assignment evidence).
+    words = re.findall(r"[a-zA-Z][a-zA-Z']{1,}", text)
+    if len(words) < 6 and not re.search(r"[ऀ-ॿ]{20,}", text):
+        # Few English words AND not a substantive Devanagari passage.
+        return True
+
+    # If the only English content is one of the canned hallucination
+    # phrases, treat it as noise even if Hindi gibberish surrounds it.
+    english_chunk = " ".join(words).lower().strip()
+    if english_chunk in _WHISPER_HALLUCINATION_TOKENS:
+        return True
+
+    # Heavy repetition signature: same short phrase repeated >=3x.
+    for phrase in _WHISPER_HALLUCINATION_TOKENS:
+        if phrase and lowered.count(phrase) >= 3 and len(words) < 25:
+            return True
+
+    return False
+
+
 class MeetingService:
     def __init__(self, task_service: Optional[TaskService] = None) -> None:
         self._whisper = get_whisper_engine()
@@ -72,6 +125,26 @@ class MeetingService:
                 transcript=transcription.text or "",
                 language=transcription.language,
                 audio_path=str(chunk.audio_path),
+            )
+            return
+
+        if _looks_like_noise(transcription.text):
+            logger.info(
+                "Chunk %d in session %s looks like noise/Whisper hallucination "
+                "(transcript=%r); persisting transcript but skipping AI extraction.",
+                chunk.chunk_index,
+                chunk.session_id,
+                transcription.text[:120],
+            )
+            self._db.insert_transcript_chunk(
+                session_id=chunk.session_id,
+                chunk_index=chunk.chunk_index,
+                started_at=chunk.started_at,
+                ended_at=chunk.ended_at,
+                transcript=transcription.text,
+                language=transcription.language,
+                audio_path=str(chunk.audio_path),
+                summary="(transcript unclear — extraction skipped)",
             )
             return
 
