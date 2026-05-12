@@ -9,6 +9,9 @@ the failure is permanent (e.g. SERVICE_DISABLED, quota=0).
 """
 from __future__ import annotations
 
+import http.client
+import socket
+import ssl
 from typing import Callable, Optional, TypeVar
 
 from tenacity import (
@@ -24,9 +27,22 @@ from .logger import get_logger
 T = TypeVar("T")
 logger = get_logger(__name__)
 
+# Transient network/TLS errors that callers shouldn't have to enumerate.
+# Google API calls (Sheets/Gmail/Chat/Drive) routinely hit these when the
+# server forcibly closes a keep-alive connection mid-request — they're
+# retryable by definition.
+_ALWAYS_RETRYABLE: tuple = (
+    ConnectionError,                # incl. ConnectionResetError, BrokenPipeError
+    socket.timeout,
+    ssl.SSLError,
+    http.client.RemoteDisconnected,
+    http.client.BadStatusLine,
+    http.client.IncompleteRead,
+)
+
 
 def _is_retryable_default(exc: BaseException, allowed: tuple) -> bool:
-    return isinstance(exc, allowed)
+    return isinstance(exc, allowed) or isinstance(exc, _ALWAYS_RETRYABLE)
 
 
 def retry_call(
