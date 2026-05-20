@@ -188,8 +188,9 @@ class MeetingService:
             insights=insights,
         )
 
+        transcript_path = None
         try:
-            write_transcript_file(
+            transcript_path = write_transcript_file(
                 session_id=chunk.session_id,
                 chunk_index=chunk.chunk_index,
                 transcript=transcription.text,
@@ -231,6 +232,8 @@ class MeetingService:
                 transcript_text=transcription.text,
                 transcription_accuracy=accuracy_pct,
                 accuracy_explanation=accuracy_explanation,
+                audio_path=chunk.audio_path,
+                transcript_path=transcript_path,
             )
 
         logger.info(
