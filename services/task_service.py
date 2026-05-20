@@ -16,6 +16,7 @@ Task-merge model:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Iterable, Optional
 
 from database import get_db
@@ -23,6 +24,42 @@ from database.models import ExtractedTask
 from transcription.lexicon import canonical_spoc, correct_names
 from utils.identifiers import clean_identifier
 from utils.logger import get_logger
+
+
+def _file_url(p: Optional[Path]) -> Optional[str]:
+    """
+    Build a file:// URL for a local path. Returns None if the path is
+    falsy or doesn't exist. Uses Path.as_uri() so percent-encoding of
+    spaces / unicode in the user's profile path is handled correctly.
+    """
+    if not p:
+        return None
+    try:
+        if not p.exists():
+            return None
+        return p.resolve().as_uri()
+    except Exception:
+        return None
+
+
+def _build_meeting_source_link(
+    audio: Optional[Path], transcript: Optional[Path]
+) -> Optional[str]:
+    """
+    Compose the Source Link cell for a meeting/voice-memo task.
+
+    Layout (newline-separated so a single cell shows both):
+        Audio: file:///C:/.../session-.../chunk_0007.wav
+        Transcript: file:///C:/.../transcripts/session-.../chunk_0007.txt
+    """
+    parts = []
+    a = _file_url(audio)
+    t = _file_url(transcript)
+    if a:
+        parts.append(f"Audio: {a}")
+    if t:
+        parts.append(f"Transcript: {t}")
+    return "\n".join(parts) if parts else None
 
 logger = get_logger(__name__)
 
@@ -286,16 +323,22 @@ class TaskService:
         transcript_text: Optional[str] = None,
         transcription_accuracy: Optional[int] = None,
         accuracy_explanation: Optional[str] = None,
+        audio_path: Optional["Path"] = None,
+        transcript_path: Optional["Path"] = None,
     ) -> int:
         ref = f"{session_id}:{chunk_index:04d}"
-        # We're recording the user alone (no diarisation) — call it a voice memo.
         from config import settings as _settings
         detail = f"voice memo by {_settings.self_display_name}"
+        # Build a multi-line source_link with file:// URLs to both the audio
+        # chunk and the transcript text. Excel renders these as clickable;
+        # Google Sheets shows them as text (file:// can't be auto-clicked from
+        # the browser for security reasons, but the path is copy-pastable).
+        link = _build_meeting_source_link(audio_path, transcript_path)
         return self._save(
             source_type="Meeting",
             source_ref_id=ref,
             source_detail=detail,
-            source_link=None,
+            source_link=link,
             date_given=started_at,
             spoc_contact=None,
             summary=chunk_summary,
