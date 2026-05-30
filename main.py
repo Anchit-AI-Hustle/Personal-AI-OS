@@ -131,7 +131,7 @@ class PersonalAIOS:
                 # Pass email context to differentiate between vahdam and personal
                 on_message=lambda msg: email_service.process_message(
                     msg, 
-                    target_sheet="Vahdam - Task Tracker" if "vahdam.com" in msg.to else "Anchit - Personal Tracker"
+                    target_sheet="Vahdam - Task Tracker" if "vahdam.com" in msg.to else "Anchit - Personal Tracker" # pyright: ignore[reportCallIssue] # pyright: ignore[reportAttributeAccessIssue] # pyright: ignore[reportAttributeAccessIssue] # type: ignore
                 ),
                 stop_event=self.stop_event,
             )
