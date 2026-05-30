@@ -17,8 +17,16 @@ import json
 import threading
 from typing import Optional
 
+<<<<<<< HEAD
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
+=======
+# pyrefly: ignore [missing-import]
+from google.auth.transport.requests import AuthorizedSession, Request
+# pyrefly: ignore [missing-import]
+from google.oauth2.credentials import Credentials
+# pyrefly: ignore [missing-import]
+>>>>>>> 4da5e248c35825dffaaba56be6a6ce0c662f0368
 from google_auth_oauthlib.flow import InstalledAppFlow
 
 from config import settings
