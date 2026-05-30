@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """
 SQLite wrapper.
 
@@ -10,17 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-=======
-"""SQLite-backed deduplication store for processed Gmail message IDs."""
-from __future__ import annotations
-
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5
 import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-<<<<<<< HEAD
 from typing import Any, Iterable, Iterator, Optional
 
 from config import settings
@@ -49,6 +42,42 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """
+    Idempotent column-level migration.
+
+    SQLite's CREATE TABLE IF NOT EXISTS won't add columns to a pre-existing
+    table, so we explicitly inspect the schema and ALTER TABLE for any new
+    columns the rest of the code now expects.
+    """
+    cur = conn.execute("PRAGMA table_info(extracted_tasks)")
+    existing = {row[1] for row in cur.fetchall()}
+
+    additions = [
+        ("task_description",     "TEXT"),
+        ("rationale",            "TEXT"),
+        ("growth_pillar",        "TEXT"),
+        ("sheet_row_source",     "INTEGER"),
+        ("sheet_row_all",        "INTEGER"),
+        ("source_detail",        "TEXT"),  # human-readable origin label
+        ("source_link",          "TEXT"),  # direct URL to the original message
+        ("date_given",           "TEXT"),  # ISO 8601 — when the source was created
+        ("spoc_contact",         "TEXT"),  # email / phone if known, otherwise null
+        ("all_updates",          "TEXT"),  # newline-separated chronological updates
+        ("normalized_heading",   "TEXT"),  # used to merge duplicate task rows
+        ("user_remarks",         "TEXT"),  # human-maintained notes from the tracker
+        ("last_human_update_at", "TEXT"),  # ISO 8601 when the user last touched the task
+        ("last_reminder_sent_at","TEXT"),  # ISO 8601 when the latest reminder went out
+        ("source_text",            "TEXT"),     # raw source: email body / chat / audio transcript
+        ("transcription_accuracy", "INTEGER"),  # 0-100 LLM-estimated accuracy (null for non-audio)
+        ("accuracy_explanation",   "TEXT"),     # why this rating + how to improve
+    ]
+    for col, col_type in additions:
+        if col not in existing:
+            conn.execute(f"ALTER TABLE extracted_tasks ADD COLUMN {col} {col_type}")
+            logger.info("Migrated extracted_tasks: added column %s", col)
+
+
 def _init_schema() -> None:
     global _initialised
     with _init_lock:
@@ -59,6 +88,7 @@ def _init_schema() -> None:
         conn = _connect()
         try:
             conn.executescript(sql)
+            _migrate(conn)
         finally:
             conn.close()
         logger.info("Database schema ready at %s", settings.database_path)
@@ -76,52 +106,11 @@ class Database:
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
         conn = _connect()
-=======
-from typing import Iterable, Iterator
-
-from utils.logger import get_logger
-
-log = get_logger(__name__)
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS processed_emails (
-    message_id   TEXT PRIMARY KEY,
-    thread_id    TEXT,
-    subject      TEXT,
-    sender       TEXT,
-    processed_at TEXT NOT NULL,
-    actionable   INTEGER NOT NULL DEFAULT 0,
-    task_count   INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_emails(processed_at);
-"""
-
-
-class ProcessedEmailStore:
-    """Thread-safe wrapper around a small SQLite db tracking message IDs."""
-
-    def __init__(self, db_path: Path):
-        self._db_path = str(db_path)
-        self._lock = threading.Lock()
-        self._init_schema()
-
-    def _init_schema(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
-            conn.commit()
-        log.debug("SQLite schema ensured at %s", self._db_path)
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        # check_same_thread=False + a process-wide lock makes this safe under APScheduler.
-        conn = sqlite3.connect(self._db_path, check_same_thread=False, timeout=30.0)
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5
         try:
             yield conn
         finally:
             conn.close()
 
-<<<<<<< HEAD
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
         conn = _connect()
@@ -302,6 +291,17 @@ class ProcessedEmailStore:
         urgency: str,
         sender_or_speaker: Optional[str],
         summary: Optional[str],
+        task_description: Optional[str] = None,
+        rationale: Optional[str] = None,
+        growth_pillar: Optional[str] = None,
+        source_detail: Optional[str] = None,
+        source_link: Optional[str] = None,
+        date_given: Optional[str] = None,
+        spoc_contact: Optional[str] = None,
+        normalized_heading: Optional[str] = None,
+        source_text: Optional[str] = None,
+        transcription_accuracy: Optional[int] = None,
+        accuracy_explanation: Optional[str] = None,
     ) -> Optional[int]:
         """Returns the inserted row id, or None if it was a duplicate."""
         dedupe_hash = self.make_task_dedupe_hash(source_type, source_ref_id, task)
@@ -309,67 +309,261 @@ class ProcessedEmailStore:
             cur = conn.execute(
                 """
                 INSERT OR IGNORE INTO extracted_tasks(
-                    source_type, source_ref_id, task, deadline, urgency,
-                    sender_or_speaker, summary, status, created_at, dedupe_hash
+                    source_type, source_ref_id, task, task_description, rationale,
+                    growth_pillar, deadline, urgency, sender_or_speaker, summary,
+                    source_detail, source_link, date_given, spoc_contact,
+                    normalized_heading, source_text, transcription_accuracy,
+                    accuracy_explanation, status, created_at, dedupe_hash
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
                 """,
                 (
                     source_type,
                     source_ref_id,
                     task,
+                    task_description,
+                    rationale,
+                    growth_pillar,
                     deadline,
                     urgency,
                     sender_or_speaker,
                     summary,
+                    source_detail,
+                    source_link,
+                    date_given,
+                    spoc_contact,
+                    normalized_heading,
+                    source_text,
+                    transcription_accuracy,
+                    accuracy_explanation,
                     _utcnow(),
                     dedupe_hash,
                 ),
             )
             return int(cur.lastrowid) if cur.rowcount > 0 else None
 
-    def unsynced_tasks(self, limit: int = 100) -> list[sqlite3.Row]:
+    def find_open_task_by_heading(
+        self,
+        *,
+        normalized_heading: str,
+        spoc: Optional[str],
+    ) -> Optional[sqlite3.Row]:
+        """
+        Find an OPEN task that matches the given normalized heading and SPOC.
+        Used by TaskService to merge new updates into an existing task row
+        instead of creating duplicate rows.
+
+        Both `normalized_heading` and `spoc` are matched case-insensitively;
+        SPOC may be NULL on either side and we still consider it a match
+        when both are NULL.
+        """
+        if not normalized_heading:
+            return None
+        rows = self.fetchall(
+            """
+            SELECT *
+              FROM extracted_tasks
+             WHERE status = 'open'
+               AND LOWER(COALESCE(normalized_heading,'')) = LOWER(?)
+               AND LOWER(COALESCE(sender_or_speaker,'')) = LOWER(COALESCE(?, ''))
+             ORDER BY created_at ASC
+             LIMIT 1
+            """,
+            (normalized_heading, spoc or ""),
+        )
+        return rows[0] if rows else None
+
+    def append_task_update(self, task_id: int, update_line: str) -> None:
+        """
+        Append `update_line` to the task's all_updates column (newest-last)
+        and mark the row unsynced so the next forward-sync push refreshes
+        the sheet/Excel cell.
+
+        Empty / whitespace-only update_line is a no-op.
+        """
+        line = (update_line or "").strip()
+        if not line:
+            return
+        with self.connection() as conn:
+            cur = conn.execute(
+                "SELECT all_updates FROM extracted_tasks WHERE id = ?",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return
+            existing = (row["all_updates"] or "").strip()
+            new_value = f"{existing}\n{line}".strip() if existing else line
+            conn.execute(
+                """
+                UPDATE extracted_tasks
+                   SET all_updates      = ?,
+                       synced_to_sheets = 0
+                 WHERE id = ?
+                """,
+                (new_value, task_id),
+            )
+
+    def get_task(self, task_id: int) -> Optional[sqlite3.Row]:
+        return self.fetchone(
+            """
+            SELECT *
+              FROM extracted_tasks
+             WHERE id = ?
+            """,
+            (task_id,),
+        )
+
+    def update_task_tracker_fields(
+        self,
+        task_id: int,
+        *,
+        task: Optional[str] = None,
+        task_description: Optional[str] = None,
+        rationale: Optional[str] = None,
+        growth_pillar: Optional[str] = None,
+        sender_or_speaker: Optional[str] = None,
+        spoc_contact: Optional[str] = None,
+        urgency: Optional[str] = None,
+        deadline: Optional[str] = None,
+        all_updates: Optional[str] = None,
+        user_remarks: Optional[str] = None,
+        status: Optional[str] = None,
+        touched_by_user: bool = False,
+        normalized_heading: Optional[str] = None,
+    ) -> None:
+        sets: list[str] = ["synced_to_sheets = 0"]
+        params: list[Any] = []
+
+        updates = {
+            "task": task,
+            "task_description": task_description,
+            "rationale": rationale,
+            "growth_pillar": growth_pillar,
+            "sender_or_speaker": sender_or_speaker,
+            "spoc_contact": spoc_contact,
+            "urgency": urgency,
+            "deadline": deadline,
+            "all_updates": all_updates,
+            "user_remarks": user_remarks,
+            "status": status,
+            "normalized_heading": normalized_heading,
+        }
+        for col, value in updates.items():
+            if value is None:
+                continue
+            sets.append(f"{col} = ?")
+            params.append(value)
+
+        if touched_by_user:
+            sets.append("last_human_update_at = ?")
+            params.append(_utcnow())
+
+        params.append(task_id)
+        self.execute(
+            f"UPDATE extracted_tasks SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )
+
+    def mark_reminder_sent(self, task_ids: Iterable[int]) -> None:
+        ids = [int(task_id) for task_id in task_ids]
+        if not ids:
+            return
+        now = _utcnow()
+        placeholders = ",".join("?" for _ in ids)
+        self.execute(
+            f"""
+            UPDATE extracted_tasks
+               SET last_reminder_sent_at = ?
+             WHERE id IN ({placeholders})
+            """,
+            (now, *ids),
+        )
+
+    def open_tasks_for_reminders(self) -> list[sqlite3.Row]:
         return self.fetchall(
             """
-            SELECT id, source_type, source_ref_id, task, deadline, urgency,
-                   sender_or_speaker, summary, status, created_at
+            SELECT id, task, task_description, deadline, urgency, status,
+                   sender_or_speaker, spoc_contact, source_type, source_detail,
+                   source_link, all_updates, user_remarks, created_at,
+                   last_human_update_at, last_reminder_sent_at
+              FROM extracted_tasks
+             WHERE status = 'open'
+             ORDER BY created_at ASC
+            """
+        )
+
+    def unsynced_tasks(self, limit: int = 100) -> list[sqlite3.Row]:
+        # Order DESC by date_given so a fresh-rebuild push lays rows down
+        # newest-first in the Sheet — i.e. the top rows are the most
+        # recently-given tasks. NULL date_given comes last (rare; only
+        # when neither extraction nor migration could recover one).
+        # `created_at` is the tiebreaker for tasks with the same exact
+        # date_given timestamp.
+        return self.fetchall(
+            """
+            SELECT id, source_type, source_ref_id, source_detail, source_link,
+                   date_given, task, task_description, rationale, growth_pillar,
+                   deadline, urgency, sender_or_speaker, spoc_contact,
+                   all_updates, user_remarks, summary, status, created_at,
+                   sheet_row_source, sheet_row_all,
+                   source_text, transcription_accuracy, accuracy_explanation
               FROM extracted_tasks
              WHERE synced_to_sheets = 0
-             ORDER BY created_at ASC
+             ORDER BY date_given IS NULL, date_given DESC, created_at DESC
              LIMIT ?
             """,
             (limit,),
         )
 
-    def mark_tasks_synced(self, task_ids: Iterable[int], starting_row: Optional[int] = None) -> None:
+    def mark_tasks_synced(
+        self,
+        task_ids: Iterable[int],
+        *,
+        all_tasks_starting_row: Optional[int] = None,
+        source_starting_row: Optional[int] = None,
+    ) -> None:
+        """
+        Mark tasks as synced. If row numbers are provided, persist them so we
+        can later update status across both tabs without re-finding rows.
+
+        `task_ids` is iterated IN ORDER — both starting_row args, if given,
+        are interpreted as the row of the FIRST id, and incremented for each
+        subsequent id. Pass None to skip storing that mapping.
+        """
         ids = list(task_ids)
         if not ids:
             return
         with self.transaction() as conn:
-            if starting_row is None:
-                conn.executemany(
-                    "UPDATE extracted_tasks SET synced_to_sheets = 1 WHERE id = ?",
-                    [(i,) for i in ids],
-                )
-            else:
-                rows = [(starting_row + idx, i) for idx, i in enumerate(ids)]
-                conn.executemany(
-                    "UPDATE extracted_tasks SET synced_to_sheets = 1, sheet_row = ? WHERE id = ?",
-                    rows,
+            for idx, task_id in enumerate(ids):
+                sets = ["synced_to_sheets = 1"]
+                params: list[Any] = []
+                if all_tasks_starting_row is not None:
+                    sets.append("sheet_row_all = ?")
+                    params.append(all_tasks_starting_row + idx)
+                if source_starting_row is not None:
+                    sets.append("sheet_row_source = ?")
+                    params.append(source_starting_row + idx)
+                params.append(task_id)
+                conn.execute(
+                    f"UPDATE extracted_tasks SET {', '.join(sets)} WHERE id = ?",
+                    tuple(params),
                 )
 
     def update_task_status(self, task_id: int, status: str) -> None:
         if status not in {"open", "done", "dropped"}:
             raise ValueError(f"Invalid status {status!r}")
         self.execute(
-            "UPDATE extracted_tasks SET status = ? WHERE id = ?",
+            "UPDATE extracted_tasks SET status = ?, synced_to_sheets = 0 WHERE id = ?",
             (status, task_id),
         )
 
     def recent_tasks(self, since_iso: str) -> list[sqlite3.Row]:
         return self.fetchall(
             """
-            SELECT id, source_type, task, deadline, urgency, sender_or_speaker,
+            SELECT id, source_type, source_detail, source_link, source_ref_id,
+                   date_given, task, task_description, rationale, growth_pillar,
+                   deadline, urgency, sender_or_speaker, spoc_contact,
                    summary, status, created_at
               FROM extracted_tasks
              WHERE created_at >= ?
@@ -433,54 +627,3 @@ def get_db() -> Database:
             if _db_singleton is None:
                 _db_singleton = Database()
     return _db_singleton
-=======
-    def is_processed(self, message_id: str) -> bool:
-        with self._lock, self._connect() as conn:
-            cur = conn.execute(
-                "SELECT 1 FROM processed_emails WHERE message_id = ? LIMIT 1",
-                (message_id,),
-            )
-            return cur.fetchone() is not None
-
-    def filter_unprocessed(self, message_ids: Iterable[str]) -> list[str]:
-        ids = list(message_ids)
-        if not ids:
-            return []
-        placeholders = ",".join("?" * len(ids))
-        with self._lock, self._connect() as conn:
-            cur = conn.execute(
-                f"SELECT message_id FROM processed_emails WHERE message_id IN ({placeholders})",
-                ids,
-            )
-            seen = {row[0] for row in cur.fetchall()}
-        return [i for i in ids if i not in seen]
-
-    def mark_processed(
-        self,
-        message_id: str,
-        *,
-        thread_id: str | None = None,
-        subject: str | None = None,
-        sender: str | None = None,
-        actionable: bool = False,
-        task_count: int = 0,
-    ) -> None:
-        with self._lock, self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO processed_emails
-                  (message_id, thread_id, subject, sender, processed_at, actionable, task_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    thread_id,
-                    subject,
-                    sender,
-                    datetime.now(timezone.utc).isoformat(),
-                    1 if actionable else 0,
-                    int(task_count),
-                ),
-            )
-            conn.commit()
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5

@@ -14,6 +14,8 @@ from ai import get_extractor
 from database import get_db
 from utils.logger import get_logger
 
+from .notifier import get_notifier
+
 logger = get_logger(__name__)
 
 
@@ -111,3 +113,11 @@ class DailySummaryWorker(threading.Thread):
         summary_text = result.get("summary") or "(empty)"
         self._db.upsert_daily_summary(date_str, summary_text, result)
         logger.info("Daily summary written for %s (%d chars).", date_str, len(summary_text))
+
+        # Outbound: Gmail digest of today's tasks. Failures are logged
+        # inside the notifier and never propagated — the summary itself
+        # is the load-bearing artifact.
+        try:
+            get_notifier().send_task_digest(tasks, date_str=date_str)
+        except Exception:
+            logger.exception("Task digest email failed (non-fatal).")

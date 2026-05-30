@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """
 Personal AI OS — entrypoint.
 
@@ -6,44 +5,117 @@ Boots every background worker and blocks until Ctrl+C / SIGTERM is
 received, then shuts everything down cleanly.
 
     python main.py
-=======
-"""Entry point for the Personal AI Email Intelligence system.
-
-Usage:
-    python main.py                 # Start the 5-minute scheduler loop.
-    python main.py --setup-gmail   # Run interactive Gmail OAuth and exit.
-    python main.py --once          # Run a single processing cycle and exit.
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5
 """
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import sys
-<<<<<<< HEAD
 import threading
 import time
+import warnings
+from pathlib import Path
 from typing import Optional
 
-from config import settings  # noqa: F401  -- importing validates env vars
-from database import get_db
-from gmail import GmailPoller
-from meetings import MeetingPipeline
-from services import DailySummaryWorker, EmailService
-from sheets import SheetsSyncWorker
-from utils.logger import get_logger, setup_logging
+# Force UTF-8 stdout/stderr so non-ASCII characters in log messages
+# (em-dashes, accented names, Hindi transcripts) display correctly on
+# Windows PowerShell, which defaults to the OEM codepage.
+for _stream_name in ("stdout", "stderr"):
+    _stream = getattr(sys, _stream_name, None)
+    if _stream is not None and hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+# Silence noisy huggingface_hub warnings BEFORE faster_whisper is imported.
+# Both are cosmetic on Windows and have nothing to do with our pipeline.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "0")  # keep progress bar; kill warnings only
+warnings.filterwarnings(
+    "ignore",
+    message=r".*sending unauthenticated requests to the HF Hub.*",
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r".*cache-system uses symlinks by default.*",
+)
+
+
+def _preflight() -> None:
+    """
+    Fail loudly with actionable advice BEFORE third-party imports run.
+    The most common pebble in this repo is running `python main.py` from
+    a fresh terminal that hasn't activated the venv — which causes a
+    ModuleNotFoundError on the very next line.
+    """
+    project_root = Path(__file__).resolve().parent
+    venv_python = project_root / ".venv" / "Scripts" / "python.exe"
+    current_python = Path(sys.executable).resolve()
+
+    # Heuristic: if a project-local .venv exists but we're not running its
+    # interpreter, the user almost certainly forgot to activate it.
+    if venv_python.exists() and current_python != venv_python.resolve():
+        # Try to import a representative third-party dep. If it works, we
+        # assume the current interpreter has its own copy and let it
+        # through — no need to nag.
+        try:
+            # pyrefly: ignore [missing-import]
+            import tenacity  # noqa: F401
+            return
+        except ImportError:
+            print(
+                "\n"
+                "================================================================\n"
+                "  Personal AI OS: virtualenv not activated.\n"
+                "================================================================\n"
+                f"  Running with : {current_python}\n"
+                f"  Expected     : {venv_python}\n"
+                "\n"
+                "  Fix it from this PowerShell session:\n"
+                "      .\\.venv\\Scripts\\Activate.ps1\n"
+                "      python main.py\n"
+                "\n"
+                "  ...or just run the venv python directly:\n"
+                "      .\\.venv\\Scripts\\python.exe main.py\n"
+                "================================================================\n",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+
+_preflight()
+
+from config import settings  # noqa: E402,F401  -- importing validates env vars
+from chat import ChatPoller  # noqa: E402
+from database import get_db  # noqa: E402
+from gmail import GmailPoller  # noqa: E402
+from meetings import MeetingPipeline  # noqa: E402
+from services import ChatService, DailySummaryWorker, EmailService  # noqa: E402
+from sheets import ReverseSyncWorker, SheetsSyncWorker  # noqa: E402
+from utils.logger import get_logger, setup_logging  # noqa: E402
 
 setup_logging()
 logger = get_logger("main")
 
 
 class PersonalAIOS:
-    def __init__(self, *, enable_email: bool, enable_meetings: bool) -> None:
+    def __init__(
+        self,
+        *,
+        enable_email: bool,
+        enable_meetings: bool,
+        enable_chat: bool,
+    ) -> None:
         self.stop_event = threading.Event()
         self._enable_email = enable_email
         self._enable_meetings = enable_meetings
+        self._enable_chat = enable_chat
         self._gmail_poller: Optional[GmailPoller] = None
+        self._chat_poller: Optional[ChatPoller] = None
         self._sheets_worker: Optional[SheetsSyncWorker] = None
+        self._reverse_sync: Optional[ReverseSyncWorker] = None
         self._meeting_pipeline: Optional[MeetingPipeline] = None
         self._daily_worker: Optional[DailySummaryWorker] = None
 
@@ -63,10 +135,31 @@ class PersonalAIOS:
         else:
             logger.info("Email module disabled by flag.")
 
-        # Sheets sync runs regardless — it flushes whatever the other
-        # workers wrote, so even a meeting-only run benefits from it.
-        self._sheets_worker = SheetsSyncWorker(stop_event=self.stop_event)
-        self._sheets_worker.start()
+        if self._enable_chat and settings.enable_chat_poller:
+            chat_service = ChatService()
+            self._chat_poller = ChatPoller(
+                on_message=chat_service.process_message,
+                stop_event=self.stop_event,
+            )
+            self._chat_poller.start()
+        else:
+            logger.info("Chat module disabled by flag or config.")
+
+        # Sheets sync runs whenever ANY producer is on.
+        any_producer = (
+            self._enable_email
+            or (self._enable_meetings and settings.enable_meeting_capture)
+            or (self._enable_chat and settings.enable_chat_poller)
+        )
+        if any_producer:
+            self._sheets_worker = SheetsSyncWorker(stop_event=self.stop_event)
+            self._sheets_worker.start()
+            # Reverse sync only makes sense when forward sync is on —
+            # there's nothing to read back if we never wrote anything.
+            self._reverse_sync = ReverseSyncWorker(stop_event=self.stop_event)
+            self._reverse_sync.start()
+        else:
+            logger.info("Sheets sync skipped: nothing to push.")
 
         if self._enable_meetings and settings.enable_meeting_capture:
             self._meeting_pipeline = MeetingPipeline(stop_event=self.stop_event)
@@ -98,7 +191,13 @@ class PersonalAIOS:
         if self._meeting_pipeline is not None:
             self._meeting_pipeline.shutdown()
 
-        for worker in (self._gmail_poller, self._sheets_worker, self._daily_worker):
+        for worker in (
+            self._gmail_poller,
+            self._chat_poller,
+            self._sheets_worker,
+            self._reverse_sync,
+            self._daily_worker,
+        ):
             if worker is not None and worker.is_alive():
                 worker.join(timeout=10.0)
 
@@ -130,15 +229,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Personal AI OS")
     p.add_argument("--no-email", action="store_true", help="disable Gmail polling")
     p.add_argument("--no-meetings", action="store_true", help="disable audio capture")
+    p.add_argument("--no-chat", action="store_true", help="disable Google Chat polling")
+    p.add_argument(
+        "--reset-initial-scan",
+        action="store_true",
+        help="Delete the initial-scan sentinel so the historical sweep runs again on this boot.",
+    )
     return p.parse_args(argv)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(list(argv if argv is not None else sys.argv[1:]))
 
+    if args.reset_initial_scan:
+        sentinel = settings.database_path.parent / ".initial_scan_done"
+        if sentinel.exists():
+            sentinel.unlink()
+            print(f"[main] Removed sentinel {sentinel}; historical scan will run on this boot.")
+        else:
+            print(f"[main] No sentinel at {sentinel} — initial scan was not done yet.")
+
     app = PersonalAIOS(
         enable_email=not args.no_email,
         enable_meetings=not args.no_meetings,
+        enable_chat=not args.no_chat,
     )
     _install_signal_handlers(app)
 
@@ -155,116 +269,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-=======
-
-# pyrefly: ignore [missing-import]
-from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.interval import IntervalTrigger
-
-from config import get_settings
-from database import ProcessedEmailStore
-from services.gmail_service import GmailService
-from services.pipeline import EmailIntelligencePipeline
-from services.sheets_service import SheetsService
-from services.task_extractor import TaskExtractor
-from utils.logger import get_logger, setup_logging
-
-
-def _build_pipeline() -> EmailIntelligencePipeline:
-    s = get_settings()
-    gmail = GmailService()
-    gmail.authenticate(interactive=False)  # fail fast if token missing
-    sheets = SheetsService()
-    extractor = TaskExtractor()
-    store = ProcessedEmailStore(s.sqlite_path)
-    return EmailIntelligencePipeline(gmail, sheets, extractor, store)
-
-
-def cmd_setup_gmail() -> int:
-    log = get_logger("setup")
-    log.info("Starting Gmail OAuth flow...")
-    GmailService().authenticate(interactive=True)
-    log.info("Gmail authentication complete. Token saved.")
-    return 0
-
-
-def cmd_once() -> int:
-    log = get_logger("main")
-    pipeline = _build_pipeline()
-    stats = pipeline.run_once()
-    log.info("One-shot run finished: %s", stats)
-    return 0
-
-
-def cmd_loop() -> int:
-    log = get_logger("main")
-    s = get_settings()
-    pipeline = _build_pipeline()
-
-    # Run immediately so the operator gets feedback on startup,
-    # then every POLL_INTERVAL_MINUTES thereafter.
-    log.info("Initial run before scheduling...")
-    try:
-        pipeline.run_once()
-    except Exception as e:
-        log.exception("Initial run failed: %s", e)
-
-    scheduler = BlockingScheduler(timezone="UTC")
-    scheduler.add_job(
-        pipeline.run_once,
-        trigger=IntervalTrigger(minutes=s.poll_interval_minutes),
-        id="email_poll",
-        name="Email intelligence poll",
-        max_instances=1,
-        coalesce=True,
-        misfire_grace_time=60,
-    )
-
-    # Graceful shutdown on Ctrl+C / SIGTERM (Windows: Ctrl+C only).
-    def _stop(signum, _frame):
-        log.info("Received signal %s, shutting down scheduler", signum)
-        scheduler.shutdown(wait=False)
-
-    signal.signal(signal.SIGINT, _stop)
-    if hasattr(signal, "SIGTERM"):
-        try:
-            signal.signal(signal.SIGTERM, _stop)
-        except (ValueError, OSError):
-            # SIGTERM handler can't be set on the main thread on some Windows setups.
-            pass
-
-    log.info("Scheduler started: every %d minute(s)", s.poll_interval_minutes)
-    try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        log.info("Scheduler stopped.")
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
-    setup_logging()
-
-    parser = argparse.ArgumentParser(description="Personal AI Email Intelligence")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--setup-gmail",
-        action="store_true",
-        help="Run the interactive Gmail OAuth flow and exit.",
-    )
-    group.add_argument(
-        "--once",
-        action="store_true",
-        help="Run a single processing cycle and exit (useful for testing / cron).",
-    )
-    args = parser.parse_args(argv)
-
-    if args.setup_gmail:
-        return cmd_setup_gmail()
-    if args.once:
-        return cmd_once()
-    return cmd_loop()
-
-
-if __name__ == "__main__":
-    sys.exit(main())
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5

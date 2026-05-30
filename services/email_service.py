@@ -6,9 +6,11 @@ new message.
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from ai import get_extractor
+from ai import QuotaExhaustedError
 from database import get_db
 from gmail.client import GmailMessage, get_gmail_client
 from utils.logger import get_logger
@@ -16,6 +18,19 @@ from utils.logger import get_logger
 from .task_service import TaskService
 
 logger = get_logger(__name__)
+
+# RFC 5322 address parser, lenient: pulls the bare email out of values like
+# "Aman Kumar <aman@vahdam.com>" or just "aman@vahdam.com".
+_EMAIL_RE = re.compile(r'<([^>]+@[^>]+)>|([^\s<>"]+@[^\s<>"]+)')
+
+
+def _extract_email_address(raw: Optional[str]) -> Optional[str]:
+    if not raw:
+        return None
+    m = _EMAIL_RE.search(raw)
+    if not m:
+        return None
+    return (m.group(1) or m.group(2)).strip()
 
 
 class EmailService:
@@ -44,8 +59,14 @@ class EmailService:
                 received_at=msg.received_at,
                 body=msg.body_text,
             )
+        except QuotaExhaustedError:
+            # Don't mark the email as processed — we want to retry it once
+            # quota recovers. Re-raise so the poller stops the current
+            # batch immediately instead of looping through dozens of
+            # messages with the same outcome.
+            raise
         except Exception:
-            logger.exception("Claude extraction failed for email %s", msg.message_id)
+            logger.exception("Gemini extraction failed for email %s", msg.message_id)
             self._db.record_processed_email(
                 gmail_message_id=msg.message_id,
                 thread_id=msg.thread_id,
@@ -64,6 +85,10 @@ class EmailService:
                 sender=msg.sender,
                 email_summary=extraction.summary,
                 tasks=extraction.tasks,
+                received_at=msg.received_at,
+                thread_id=msg.thread_id,
+                sender_email=_extract_email_address(msg.sender),
+                body_text=msg.body_text,
             )
 
         self._db.record_processed_email(

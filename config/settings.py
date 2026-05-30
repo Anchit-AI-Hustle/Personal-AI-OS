@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 """
 Centralised configuration loaded from environment variables (.env).
 
@@ -51,41 +50,24 @@ def _resolve_path(raw: Optional[str], default_relative: str) -> Path:
     if not p.is_absolute():
         p = PROJECT_ROOT / p
     return p.resolve()
-=======
-"""Centralized configuration loaded from environment variables / .env file."""
-from __future__ import annotations
-
-import os
-from dataclasses import dataclass
-from functools import lru_cache
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-
-def _resolve(path_str: str) -> Path:
-    p = Path(path_str)
-    return p if p.is_absolute() else (PROJECT_ROOT / p).resolve()
-
-
-def _require(name: str) -> str:
-    val = os.getenv(name)
-    if not val:
-        raise RuntimeError(f"Required environment variable {name} is not set")
-    return val
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5
 
 
 @dataclass(frozen=True)
 class Settings:
-<<<<<<< HEAD
-    # LLM (Google Gemini)
-    llm_api_key: str
+    # LLM provider selector
+    llm_provider: str   # "gemini" | "groq" | "ollama"
+
+    # Gemini-specific (always populated; ignored if provider != gemini)
+    llm_api_key: str    # alias for gemini_api_key, kept for backward compat
     llm_model: str
+
+    # Groq-specific
+    groq_api_key: str
+    groq_model: str
+
+    # Ollama-specific (local model server, no API key)
+    ollama_model: str
+    ollama_host: str
 
     # Google Sheets
     google_sheet_id: str
@@ -101,11 +83,13 @@ class Settings:
     audio_input_device: Optional[str]
     enable_meeting_capture: bool
 
-    # Whisper
+    # Speech-to-text
+    stt_backend: str   # "local" | "groq"
     whisper_model: str
     whisper_device: str
     whisper_compute_type: str
     whisper_language: Optional[str]
+    groq_whisper_model: str
 
     # Paths
     project_root: Path
@@ -122,12 +106,38 @@ class Settings:
     # Daily summary
     daily_summary_hour: int
 
-    # OAuth scopes
+    # OAuth account binding
+    expected_google_account: Optional[str]
+    oauth_chrome_profile: Optional[str]
+
+    # "Self" identity for chat — used to label outgoing messages/tasks.
+    self_chat_user_id: Optional[str]
+    self_display_name: str
+
+    # One-time historical Gmail scan
+    initial_scan_days: int       # 0 = disabled
+    initial_scan_max_messages: int
+
+    # Google Chat poller
+    enable_chat_poller: bool
+    chat_polling_interval: int
+
+    # Outbound notifications (Gmail digest)
+    notification_recipient: Optional[str]
+    enable_notifications: bool
+
+    # OAuth scopes — Chat scopes added so we can also read Spaces/DMs.
+    # gmail.send added for the outbound digest. Adding new scopes here
+    # triggers a re-consent on next run if the current token doesn't
+    # have them.
     oauth_scopes: tuple = field(
         default=(
             "https://www.googleapis.com/auth/gmail.readonly",
             "https://www.googleapis.com/auth/gmail.modify",
+            "https://www.googleapis.com/auth/gmail.send",
             "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/chat.spaces.readonly",
+            "https://www.googleapis.com/auth/chat.messages.readonly",
         )
     )
 
@@ -142,11 +152,43 @@ class Settings:
 
 
 def _load() -> Settings:
-    api_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY")
-    if not api_key:
+    raw_provider = (_env("LLM_PROVIDER", "gemini") or "gemini").strip().lower()
+    # Accept a single provider OR a comma-separated priority chain.
+    # The chain is iterated left-to-right by RoutedClient on quota
+    # exhaustion. Validation: every name must be one of the three known
+    # providers, and the API key for any cloud provider in the chain
+    # must be configured.
+    provider_chain = [p.strip() for p in raw_provider.split(",") if p.strip()]
+    if not provider_chain:
+        raise RuntimeError("LLM_PROVIDER is empty.")
+    valid_providers = {"gemini", "groq", "ollama"}
+    unknown = [p for p in provider_chain if p not in valid_providers]
+    if unknown:
         raise RuntimeError(
-            "GEMINI_API_KEY is missing. Copy .env.example to .env and fill it in. "
-            "Get a key at https://aistudio.google.com/apikey"
+            f"LLM_PROVIDER contains unknown provider(s) {unknown!r}. "
+            f"Valid: {sorted(valid_providers)}. "
+            f"Use a single name (e.g. 'gemini') or a chain (e.g. 'gemini,groq,ollama')."
+        )
+    # `provider` retained as the canonical normalised string for the
+    # Settings dataclass; consumers split it themselves.
+    provider = ",".join(provider_chain)
+
+    gemini_api_key = _env("GEMINI_API_KEY") or _env("GOOGLE_API_KEY") or ""
+    groq_api_key = _env("GROQ_API_KEY") or ""
+
+    # Validate the key for any cloud provider that's anywhere in the
+    # chain (it might be the fallback, but we still need credentials
+    # ready for when it's needed). Ollama is local and needs no key.
+    if "gemini" in provider_chain and not gemini_api_key:
+        raise RuntimeError(
+            "LLM_PROVIDER includes 'gemini' but GEMINI_API_KEY is missing in .env. "
+            "Get a key at https://aistudio.google.com/apikey "
+            "(use a personal Google account — Workspace accounts get limit:0)."
+        )
+    if "groq" in provider_chain and not groq_api_key:
+        raise RuntimeError(
+            "LLM_PROVIDER includes 'groq' but GROQ_API_KEY is missing in .env. "
+            "Get a key at https://console.groq.com/keys (free tier, no Workspace restriction)."
         )
 
     sheet_id = _env("GOOGLE_SHEET_ID")
@@ -165,11 +207,16 @@ def _load() -> Settings:
             creds_path = legacy
 
     return Settings(
-        llm_api_key=api_key,
+        llm_provider=provider,
+        llm_api_key=gemini_api_key,
         llm_model=_env("GEMINI_MODEL", "gemini-2.0-flash") or "gemini-2.0-flash",
+        groq_api_key=groq_api_key,
+        groq_model=_env("GROQ_MODEL", "llama-3.1-8b-instant") or "llama-3.1-8b-instant",
+        ollama_model=_env("OLLAMA_MODEL", "llama3.1:8b") or "llama3.1:8b",
+        ollama_host=_env("OLLAMA_HOST", "http://localhost:11434") or "http://localhost:11434",
         google_sheet_id=sheet_id,
         google_sheet_tab=_env("GOOGLE_SHEET_TAB", "Tasks") or "Tasks",
-        polling_interval=_env_int("POLLING_INTERVAL", 300),
+        polling_interval=_env_int("POLLING_INTERVAL", 30),
         gmail_query_filter=_env(
             "GMAIL_QUERY_FILTER", "is:unread newer_than:2d"
         ) or "is:unread newer_than:2d",
@@ -177,10 +224,12 @@ def _load() -> Settings:
         audio_sample_rate=_env_int("AUDIO_SAMPLE_RATE", 16000),
         audio_input_device=_env("AUDIO_INPUT_DEVICE"),
         enable_meeting_capture=_env_bool("ENABLE_MEETING_CAPTURE", True),
+        stt_backend=(_env("STT_BACKEND", "local") or "local").strip().lower(),
         whisper_model=_env("WHISPER_MODEL", "base") or "base",
         whisper_device=_env("WHISPER_DEVICE", "cpu") or "cpu",
         whisper_compute_type=_env("WHISPER_COMPUTE_TYPE", "int8") or "int8",
         whisper_language=_env("WHISPER_LANGUAGE"),
+        groq_whisper_model=_env("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo") or "whisper-large-v3-turbo",
         project_root=PROJECT_ROOT,
         database_path=_resolve_path(_env("DATABASE_PATH"), "./data/personal_ai_os.db"),
         audio_chunks_dir=_resolve_path(_env("AUDIO_CHUNKS_DIR"), "./data/audio_chunks"),
@@ -190,53 +239,19 @@ def _load() -> Settings:
         google_token_path=_resolve_path(_env("GOOGLE_TOKEN_PATH"), "./token.json"),
         log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
         daily_summary_hour=_env_int("DAILY_SUMMARY_HOUR", 21),
+        expected_google_account=_env("EXPECTED_GOOGLE_ACCOUNT"),
+        oauth_chrome_profile=_env("OAUTH_CHROME_PROFILE"),
+        self_chat_user_id=_env("SELF_CHAT_USER_ID"),
+        self_display_name=_env("SELF_DISPLAY_NAME", "Anchit (Self)") or "Anchit (Self)",
+        initial_scan_days=_env_int("INITIAL_SCAN_DAYS", 0),
+        initial_scan_max_messages=_env_int("INITIAL_SCAN_MAX_MESSAGES", 1000),
+        enable_chat_poller=_env_bool("ENABLE_CHAT_POLLER", True),
+        chat_polling_interval=_env_int("CHAT_POLLING_INTERVAL", 60),
+        notification_recipient=_env("NOTIFICATION_RECIPIENT")
+        or _env("EXPECTED_GOOGLE_ACCOUNT"),
+        enable_notifications=_env_bool("ENABLE_NOTIFICATIONS", True),
     )
 
 
 settings = _load()
 settings.ensure_directories()
-=======
-    google_sheet_id: str
-    google_sheet_tab: str
-    google_credentials_path: Path
-
-    gmail_oauth_client_path: Path
-    gmail_token_path: Path
-    gmail_query: str
-    gmail_max_results: int
-
-    anthropic_api_key: str
-    anthropic_model: str
-
-    poll_interval_minutes: int
-
-    sqlite_path: Path
-
-    log_level: str
-    log_file: Path
-
-
-@lru_cache(maxsize=1)
-def get_settings() -> Settings:
-    sqlite_path = _resolve(os.getenv("SQLITE_PATH", "./data/email_intel.db"))
-    sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-    log_file = _resolve(os.getenv("LOG_FILE", "./email_intelligence.log"))
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-
-    return Settings(
-        google_sheet_id=_require("GOOGLE_SHEET_ID"),
-        google_sheet_tab=os.getenv("GOOGLE_SHEET_TAB", "Tasks"),
-        google_credentials_path=_resolve(os.getenv("GOOGLE_CREDENTIALS", "./credentials.json")),
-        gmail_oauth_client_path=_resolve(os.getenv("GMAIL_OAUTH_CLIENT", "./client_secret.json")),
-        gmail_token_path=_resolve(os.getenv("GMAIL_TOKEN_PATH", "./token.json")),
-        gmail_query=os.getenv("GMAIL_QUERY", "is:unread in:inbox newer_than:1d"),
-        gmail_max_results=int(os.getenv("GMAIL_MAX_RESULTS", "25")),
-        anthropic_api_key=_require("ANTHROPIC_API_KEY"),
-        anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-opus-4-5"),
-        poll_interval_minutes=int(os.getenv("POLL_INTERVAL_MINUTES", "5")),
-        sqlite_path=sqlite_path,
-        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        log_file=log_file,
-    )
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5

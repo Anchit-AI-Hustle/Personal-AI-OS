@@ -1,9 +1,9 @@
-<<<<<<< HEAD
 # --- Core ---
 python-dotenv>=1.0.1
 
-# --- Google Gemini ---
+# --- LLM providers (pick one via LLM_PROVIDER in .env) ---
 google-genai>=0.3.0
+groq>=0.11.0
 
 # --- Google APIs (Gmail + Sheets) ---
 google-api-python-client>=2.149.0
@@ -23,16 +23,8 @@ faster-whisper>=1.0.3
 # --- Resilience ---
 tenacity>=9.0.0
 
+# --- Excel mirror ---
+openpyxl>=3.1.5
+
 # --- Utilities ---
 python-dateutil>=2.9.0
-=======
-google-api-python-client==2.149.0
-google-auth==2.35.0
-google-auth-oauthlib==1.2.1
-google-auth-httplib2==0.2.0
-gspread==6.1.4
-anthropic==0.39.0
-python-dotenv==1.0.1
-APScheduler==3.10.4
-tenacity==9.0.0
->>>>>>> 7daead1c75c5ad9cf7f78d23d6ae58b1e8a54bc5
