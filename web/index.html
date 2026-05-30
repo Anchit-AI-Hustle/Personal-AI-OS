@@ -116,9 +116,9 @@
     </div>
     <span class="grow"></span>
     <select class="ctl" id="sortSel" title="Sort within columns">
+      <option value="created">Sort: Recently added</option>
       <option value="urgency">Sort: Priority</option>
       <option value="deadline">Sort: Deadline</option>
-      <option value="created">Sort: Created</option>
       <option value="title">Sort: Title A–Z</option>
     </select>
     <button class="btn" id="loadBtn">⬆ Import</button>
@@ -151,7 +151,7 @@ const COLUMNS = [
 const URANK = {Critical:0,High:1,Medium:2,Low:3};
 const AVA_COLORS = ["#6366f1","#22c55e","#f59e0b","#ef4444","#a855f7","#06b6d4","#ec4899","#84cc16"];
 let TASKS = [];
-let activeSrc="All", activeAsg="All", query="", sortBy="urgency";
+let activeSrc="All", activeAsg="All", query="", sortBy="created";
 
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
