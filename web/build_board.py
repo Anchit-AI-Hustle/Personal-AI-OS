@@ -91,18 +91,24 @@ def from_xlsx():
     out=[]
     for i, r in enumerate(rows[1:], 1):
         t=blank()
+        # NOTE: in this export several columns are misaligned at source
+        # (e.g. "Why We're Doing This" holds the channel, "SPOC" holds the
+        # rationale sentence, "All Updates" holds an accuracy label). We only
+        # surface the fields that are reliably correct, and skip the scrambled
+        # ones rather than show nonsense. Re-run from the live SQLite DB to get
+        # the clean, correctly-mapped data.
         t.update(
             id=g(r,"_task_id") or i,
             source_type=g(r,"Source"),
             source_link=g(r,"Source Link"),
             task=g(r,"Task Heading","Task"),
             task_description=g(r,"Task Description"),
-            rationale=g(r,"Why We're Doing This","Why We’re Doing This"),
+            rationale="",                       # unreliable in this export
             growth_pillar=g(r,"Growth Pillar"),
             deadline=g(r,"Task Deadline","Deadline"),
             urgency=norm_urgency(g(r,"Priority")),
-            spoc=g(r,"SPOC"),
-            summary=g(r,"Remarks") or g(r,"All Updates"),
+            spoc="",                            # unreliable in this export
+            summary="",                         # unreliable in this export
             created_at=str(g(r,"Task Given On") or ""),
         )
         t["status"]=norm_status(g(r,"Status"), g(r,"Done?"))
