@@ -48,3 +48,4 @@ logs/
 
 # Logs
 *.log
+.env*.local
