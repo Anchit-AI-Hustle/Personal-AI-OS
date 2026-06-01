@@ -11,11 +11,44 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv_file(path: Path) -> bool:
+    """Load simple KEY=VALUE pairs without importing python-dotenv.
+
+    The project can contain a local `dotenv/` virtualenv directory, which
+    shadows the `python-dotenv` package during `from dotenv import load_dotenv`.
+    This tiny loader covers the env-file syntax used by `.env.example` and keeps
+    real process environment variables authoritative.
+    """
+    if not path.exists():
+        return False
+
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if raw.startswith("export "):
+            raw = raw[len("export ") :].strip()
+        if "=" not in raw:
+            continue
+
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key or key in os.environ:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ[key] = value
+
+    return True
+
 
 # Load .env once, the first time this module is imported.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env")
+_load_dotenv_file(PROJECT_ROOT / ".env") or _load_dotenv_file(PROJECT_ROOT / "config" / ".env")
 
 
 def _env(key: str, default: Optional[str] = None) -> Optional[str]:
