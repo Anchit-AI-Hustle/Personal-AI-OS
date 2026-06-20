@@ -40,11 +40,29 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-# Below this peak amplitude (float32 in [-1, 1]) we treat the chunk as
-# silence. 0.005 is conservative: normal speech 30cm from a laptop mic
-# peaks around 0.1–0.5; pure noise floor is < 0.001; muted-mic digital
-# silence is exactly 0.0.
+# Hard floor for the silence threshold (float32 peak in [-1, 1]). The
+# adaptive threshold (see _calibrate_silence_threshold) is never allowed
+# below this, so a muted / privacy-blocked mic (digital silence = 0.0)
+# is always classified as silent. 0.005 is conservative: normal speech
+# 30cm from a laptop mic peaks around 0.1–0.5; pure noise floor is < 0.001.
 _SILENCE_PEAK_THRESHOLD = 0.005
+
+# A fixed threshold misclassifies on diverse mic hardware: a low-gain /
+# far-field / Bluetooth mic can have genuine speech BELOW the floor (lost
+# as silent), while a noisy room (AC, fan, traffic) can sit ABOVE it
+# (every chunk transcribed into Whisper garbage). So we calibrate at
+# startup off the 1s health probe, which records ambient room tone:
+#
+#   threshold = clamp(probe_peak * _NOISE_MARGIN, floor, ceiling)
+#
+# _NOISE_MARGIN keeps the bar a comfortable step above the measured noise
+# floor so room tone is skipped but speech (much louder) passes.
+_NOISE_MARGIN = 3.0
+# Ceiling guards the pathological case where the probe happens to capture
+# the user mid-sentence: speech peaks (0.1–0.5) must never raise the bar
+# so high that subsequent real speech gets dropped. 0.05 sits safely
+# below the bottom of the speech range.
+_ADAPTIVE_CEILING = 0.05
 
 
 @dataclass
@@ -101,6 +119,10 @@ class AudioCapture(threading.Thread):
         self.session_id = datetime.now(timezone.utc).strftime("session-%Y%m%dT%H%M%SZ")
         self._chunk_index = 0
         self._frames_queue: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=2048)
+
+        # Effective silence threshold for this run. Starts at the hard floor
+        # and is raised to fit the room by _probe_mic_health() on startup.
+        self._silence_threshold = _SILENCE_PEAK_THRESHOLD
 
     # --- public --------------------------------------------------------------
 
@@ -161,13 +183,19 @@ class AudioCapture(threading.Thread):
     def _probe_mic_health(self) -> None:
         """
         Record 1 second from the configured device and measure peak
-        amplitude. If it's effectively zero, log a HUGE warning — this
-        almost always means the mic is hardware-muted, blocked by
-        Windows privacy settings, or the wrong device is selected.
+        amplitude. Two jobs:
+
+          1. If it's effectively zero, log a HUGE warning — this almost
+             always means the mic is hardware-muted, blocked by Windows
+             privacy settings, or the wrong device is selected.
+
+          2. Otherwise, treat the sample as ambient room tone and
+             calibrate this run's silence threshold to sit above it
+             (see _calibrate_silence_threshold), so the fixed-threshold
+             misclassification on diverse mic hardware is avoided.
 
         Never raises — failure here is non-fatal; the main record loop
-        will start anyway and Whisper will tell us nothing useful but
-        the process keeps running.
+        will start anyway with the default (floor) threshold.
         """
         try:
             data = sd.rec(
@@ -205,11 +233,27 @@ class AudioCapture(threading.Thread):
                 peak,
             )
         else:
+            self._calibrate_silence_threshold(peak)
             logger.info(
-                "Mic health probe OK: device=%r peak=%.4f over 1s.",
+                "Mic health probe OK: device=%r peak=%.4f over 1s. "
+                "Silence threshold calibrated to %.5f.",
                 self._device if self._device is not None else "<system default>",
                 peak,
+                self._silence_threshold,
             )
+
+    def _calibrate_silence_threshold(self, ambient_peak: float) -> None:
+        """
+        Set this run's silence threshold from the ambient room tone
+        measured by the startup probe. Clamped between the hard floor
+        (so a dead mic always reads silent) and the ceiling (so a probe
+        that accidentally caught speech can't push the bar above the
+        speech range and start dropping real utterances).
+        """
+        adaptive = ambient_peak * _NOISE_MARGIN
+        self._silence_threshold = min(
+            _ADAPTIVE_CEILING, max(_SILENCE_PEAK_THRESHOLD, adaptive)
+        )
 
     # --- internals -----------------------------------------------------------
 
@@ -282,9 +326,10 @@ class AudioCapture(threading.Thread):
         self._chunk_index += 1
 
         # Peak amplitude — used by the consumer (meeting_service) to
-        # decide whether to skip transcription on a silent chunk.
+        # decide whether to skip transcription on a silent chunk. Compared
+        # against the per-run threshold calibrated to the room at startup.
         peak = float(np.max(np.abs(audio))) if audio.size else 0.0
-        is_silent = peak < _SILENCE_PEAK_THRESHOLD
+        is_silent = peak < self._silence_threshold
 
         filename = f"{self.session_id}_chunk_{idx:04d}.wav"
         path = self._output_dir / filename

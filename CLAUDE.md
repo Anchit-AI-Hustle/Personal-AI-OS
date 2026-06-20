@@ -60,7 +60,7 @@ Key invariants worth knowing before editing:
 - **DB migrations live in `database/db.py::_migrate`** and run every boot — they ALTER TABLE to add any missing columns. New columns get added there, not in `schema.sql` alone.
 - **Vahdam-only gate** is enforced inside the LLM prompts in `ai/prompts.py` (personal banking, food delivery, etc. must produce empty task lists). If extraction is misclassifying something, the fix is usually a prompt edit, not a code edit.
 - **Identifier hygiene**: `utils/identifiers.py::clean_identifier` rejects `users/12345`, `(unknown)`, opaque IDs as SPOC values; `transcription/lexicon.py::CANONICAL_DISPLAY` folds full names to short forms (`"Anchit Tandon"` → `"Anchit"`).
-- **Silence skip**: mic chunks carry `is_silent`/`peak_amplitude`; silent chunks bypass Whisper entirely to avoid hallucinated "Thank you" transcripts. Threshold in `transcription/audio_capture.py::_SILENCE_PEAK_THRESHOLD`.
+- **Silence skip**: mic chunks carry `is_silent`/`peak_amplitude`; silent chunks bypass Whisper entirely to avoid hallucinated "Thank you" transcripts. The threshold is **adaptive**: the startup mic probe measures ambient room tone and calibrates `AudioCapture._silence_threshold` to `clamp(probe_peak · _NOISE_MARGIN, _SILENCE_PEAK_THRESHOLD, _ADAPTIVE_CEILING)` (all in `transcription/audio_capture.py`). `_SILENCE_PEAK_THRESHOLD` is the hard floor (dead-mic detection); `_ADAPTIVE_CEILING` guards against a probe that catches speech. Tune room sensitivity via `_NOISE_MARGIN`.
 
 ## When to restart `main.py`
 

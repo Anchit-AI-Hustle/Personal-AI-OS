@@ -1,0 +1,14 @@
+# secrets
+**/.env
+# node / expo
+mobile/node_modules/
+mobile/.expo/
+mobile/android/
+mobile/ios/
+mobile/dist/
+# python
+voice-worker/.venv/
+**/__pycache__/
+*.pyc
+# misc
+.DS_Store

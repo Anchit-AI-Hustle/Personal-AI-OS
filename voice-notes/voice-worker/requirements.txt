@@ -1,0 +1,9 @@
+supabase>=2.6.0
+python-dotenv>=1.0.1
+requests>=2.31
+numpy>=1.26
+pydub>=0.25.1
+soundfile>=0.12.1
+torch>=2.2
+speechbrain>=1.0.0
+# ffmpeg must be installed on the system (brew install ffmpeg / apt install ffmpeg)
