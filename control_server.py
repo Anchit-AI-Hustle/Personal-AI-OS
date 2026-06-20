@@ -324,6 +324,44 @@ refresh();setInterval(refresh,3000);
 """
 
 
+import importlib.util
+
+_board_mod = None
+_board_lock = threading.Lock()
+_board_built_at = 0.0
+
+
+def _board_module():
+    """Lazy-load web/build_board.py as a module so we can call main() in-process."""
+    global _board_mod
+    if _board_mod is None:
+        spec = importlib.util.spec_from_file_location(
+            "build_board", str(WEB_DIR / "build_board.py")
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _board_mod = mod
+    return _board_mod
+
+
+def refresh_board(min_interval: float = 5.0) -> None:
+    """
+    Regenerate web/data.json from the live SQLite DB so the Kanban board
+    reflects newly-extracted tasks. Throttled to once per `min_interval`
+    seconds so rapid polling can't hammer the DB. Never raises.
+    """
+    global _board_built_at
+    with _board_lock:
+        now = time.time()
+        if now - _board_built_at < min_interval:
+            return
+        try:
+            _board_module().main()
+            _board_built_at = now
+        except Exception as exc:  # board is best-effort; engine keeps running
+            print(f"[board] data.json refresh failed: {exc}")
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str = "text/html; charset=utf-8"):
         self.send_response(code)
@@ -343,6 +381,7 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/board":
             self._serve_file(WEB_DIR / "index.html", "text/html; charset=utf-8")
         elif path == "/data.json":
+            refresh_board()  # regenerate from the live DB (throttled) before serving
             self._serve_file(WEB_DIR / "data.json", "application/json; charset=utf-8")
         else:
             self._send(404, b"Not found", "text/plain; charset=utf-8")
@@ -380,6 +419,7 @@ def main():
     threading.Thread(target=SUP.monitor_loop, daemon=True).start()
     if not args.no_engine:
         SUP.start()
+    refresh_board(min_interval=0)  # ensure data.json is current at boot
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://localhost:{args.port}"
