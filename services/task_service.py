@@ -454,6 +454,7 @@ class TaskService:
                 task_description=description or None,
                 rationale=rationale or None,
                 growth_pillar=task.growth_pillar or None,
+                workstream=task.workstream or None,
                 deadline=task.deadline,
                 urgency=task.urgency,
                 sender_or_speaker=spoc,

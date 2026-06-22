@@ -57,6 +57,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("task_description",     "TEXT"),
         ("rationale",            "TEXT"),
         ("growth_pillar",        "TEXT"),
+        ("workstream",           "TEXT"),  # "Vahdam" | "My AI Projects" — routes sheet/dashboard tab
         ("sheet_row_source",     "INTEGER"),
         ("sheet_row_all",        "INTEGER"),
         ("source_detail",        "TEXT"),  # human-readable origin label
@@ -294,6 +295,7 @@ class Database:
         task_description: Optional[str] = None,
         rationale: Optional[str] = None,
         growth_pillar: Optional[str] = None,
+        workstream: Optional[str] = None,
         source_detail: Optional[str] = None,
         source_link: Optional[str] = None,
         date_given: Optional[str] = None,
@@ -310,12 +312,12 @@ class Database:
                 """
                 INSERT OR IGNORE INTO extracted_tasks(
                     source_type, source_ref_id, task, task_description, rationale,
-                    growth_pillar, deadline, urgency, sender_or_speaker, summary,
+                    growth_pillar, workstream, deadline, urgency, sender_or_speaker, summary,
                     source_detail, source_link, date_given, spoc_contact,
                     normalized_heading, source_text, transcription_accuracy,
                     accuracy_explanation, status, created_at, dedupe_hash
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
                 """,
                 (
                     source_type,
@@ -324,6 +326,7 @@ class Database:
                     task_description,
                     rationale,
                     growth_pillar,
+                    workstream,
                     deadline,
                     urgency,
                     sender_or_speaker,
@@ -590,6 +593,40 @@ class Database:
                 json.dumps(insights) if insights else None,
                 _utcnow(),
             ),
+        )
+
+    # --- activity log --------------------------------------------------------
+
+    def log_activity(
+        self,
+        *,
+        text: str,
+        workstream: Optional[str] = None,
+        kind: str = "voice",
+        source_type: Optional[str] = None,
+        source_ref: Optional[str] = None,
+        ts: Optional[str] = None,
+        day: Optional[str] = None,
+    ) -> int:
+        """Record one day-wise activity entry (what the user was doing)."""
+        now = ts or _utcnow()
+        # `day` groups by local calendar date; caller may pass it explicitly.
+        the_day = day or now[:10]
+        with self.connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO activity_log(
+                    ts, day, workstream, kind, text, source_type, source_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (now, the_day, workstream, kind, text, source_type, source_ref, _utcnow()),
+            )
+            return int(cur.lastrowid)
+
+    def activities_for_day(self, day: str) -> list[sqlite3.Row]:
+        """All activity entries for a local YYYY-MM-DD, chronological."""
+        return self.fetchall(
+            "SELECT * FROM activity_log WHERE day = ? ORDER BY ts ASC", (day,)
         )
 
     # --- processing logs -----------------------------------------------------

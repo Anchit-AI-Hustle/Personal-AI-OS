@@ -22,8 +22,8 @@ OUT = Path(__file__).resolve().parent / "data.json"
 # canonical task shape the board consumes
 def blank():
     return {"id":"","source_type":"","task":"","task_description":"","rationale":"",
-            "growth_pillar":"","deadline":"","urgency":"Medium","spoc":"","summary":"",
-            "status":"open","done":False,"source_link":"","created_at":""}
+            "growth_pillar":"","workstream":"Vahdam","deadline":"","urgency":"Medium",
+            "spoc":"","summary":"","status":"open","done":False,"source_link":"","created_at":""}
 
 def norm_status(status, done):
     d = str(done).strip().lower() in ("true","1","yes","done","y")
@@ -48,10 +48,17 @@ def from_sqlite():
     for db in cands:
         if not (db and Path(db).exists()): continue
         con = sqlite3.connect(str(db)); con.row_factory = sqlite3.Row
+        # workstream column may be absent on an un-migrated DB — include it only if present.
+        try:
+            cols = {row[1] for row in con.execute("PRAGMA table_info(extracted_tasks)").fetchall()}
+        except Exception:
+            con.close(); continue
+        has_ws = "workstream" in cols
         try:
             rs = con.execute("SELECT id,source_type,task,task_description,rationale,"
-                "growth_pillar,deadline,urgency,sender_or_speaker,summary,status,created_at "
-                "FROM extracted_tasks ORDER BY created_at DESC").fetchall()
+                "growth_pillar,deadline,urgency,sender_or_speaker,summary,status,created_at"
+                + (",workstream" if has_ws else "")
+                + " FROM extracted_tasks ORDER BY created_at DESC").fetchall()
         except Exception:
             con.close(); continue
         con.close()
@@ -62,7 +69,8 @@ def from_sqlite():
                 task_description=r["task_description"] or "", rationale=r["rationale"] or "",
                 growth_pillar=r["growth_pillar"] or "", deadline=r["deadline"] or "",
                 urgency=norm_urgency(r["urgency"]), spoc=r["sender_or_speaker"] or "",
-                summary=r["summary"] or "", created_at=str(r["created_at"] or ""))
+                summary=r["summary"] or "", created_at=str(r["created_at"] or ""),
+                workstream=((r["workstream"] if has_ws else "") or "Vahdam"))
             t["status"]=norm_status(r["status"], False); t["done"]=(t["status"]=="done")
             out.append(t)
         if out: return out, "sqlite"
@@ -110,6 +118,7 @@ def from_xlsx():
             spoc="",                            # unreliable in this export
             summary="",                         # unreliable in this export
             created_at=str(g(r,"Task Given On") or ""),
+            workstream=(g(r,"Workstream","Stream") or "Vahdam"),
         )
         t["status"]=norm_status(g(r,"Status"), g(r,"Done?"))
         t["done"]=(t["status"]=="done")

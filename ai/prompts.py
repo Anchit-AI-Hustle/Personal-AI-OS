@@ -88,11 +88,34 @@ GROWTH_PILLARS_LIST = (
 GROWTH_PILLARS_PROMPT_HINT = " | ".join(f'"{p}"' for p in GROWTH_PILLARS_LIST)
 
 
+# The two workstreams every task is routed into. Keep aligned with
+# database.models.WORKSTREAMS.
+WORKSTREAMS_LIST = (
+    "Vahdam",          # Vahdam India D2C growth / work
+    "My AI Projects",  # Anchit's own personal builds & side projects
+)
+WORKSTREAMS_PROMPT_HINT = " | ".join(f'"{w}"' for w in WORKSTREAMS_LIST)
+
+
 # Shared task-shape spec so email + meeting + chat prompts produce the
 # same structure and the extractor / sheets writer don't need branching.
 TASK_SHAPE_HINT = dedent(
     f"""
     Each task object MUST have these fields:
+
+      "workstream":        one of [{WORKSTREAMS_PROMPT_HINT}]
+                                   //   "Vahdam"  -> anything tied to Vahdam
+                                   //     India D2C growth/work (the levers in
+                                   //     USER CONTEXT: acquisition, retention,
+                                   //     marketplace, ops, margin, team, etc.).
+                                   //   "My AI Projects" -> Anchit's OWN personal
+                                   //     builds & side projects: AI assistants
+                                   //     (e.g. a "Jarvis"), tools, apps, his
+                                   //     resume/portfolio, this Personal AI OS,
+                                   //     coding projects unrelated to Vahdam.
+                                   //   Decide by TOPIC, not by source. When a
+                                   //     personal project genuinely overlaps
+                                   //     Vahdam work, prefer "Vahdam".
 
       "task_heading":      string  // SHORT imperative, <=70 chars. Specific
                                    //   verb + concrete object. Examples:
@@ -142,6 +165,37 @@ TASK_SHAPE_HINT = dedent(
                                           //   sender's address. Set null only
                                           //   when no contact appears in the
                                           //   source.
+
+    TASK GRANULARITY & GROUPING (get the COUNT right — this matters as much
+    as the content):
+
+      - ONE task = ONE atomic, independently-completable deliverable with a
+        single owner and a single outcome.
+
+      - DO NOT over-split. If something is one logical deliverable that
+        happens to have several steps, emit ONE task and list the steps
+        inside task_description — do NOT make a separate task per step.
+          Source: "Pull the UK Amazon numbers, build the Q3 budget deck,
+                   and send it to me by Friday."
+          RIGHT: ONE task "Build and send the UK Amazon Q3 budget deck"
+                 (steps go in the description).
+          WRONG: three tasks (pull / build / send).
+
+      - DO NOT over-merge. If two asks have DIFFERENT owners, DIFFERENT
+        deadlines, or could be done/dropped independently, emit SEPARATE
+        tasks — never staple unrelated asks into one.
+          Source: "Aman, send the PPC split; Manisha, fix the PDP bug."
+          RIGHT: two tasks (different owners).
+          WRONG: one task "Send PPC split and fix PDP bug".
+
+      - DEDUPE within the source: if the same deliverable is mentioned more
+        than once (restated, repeated, summarised again), emit it ONCE and
+        fold any extra detail into the single task.
+
+      - LOSE NO DETAIL: every concrete fact tied to a task — SKU, amount,
+        channel, geography, person, deadline, and each sub-step — must
+        survive into task_heading/task_description. Folding steps into one
+        task must never drop information.
     """
 ).strip()
 
@@ -169,11 +223,13 @@ EMAIL_SYSTEM_PROMPT = dedent(
     Google Sheet, so noise has a real cost.
 
     `is_actionable` MUST be `false` and `tasks` MUST be empty for:
-      - ANYTHING NOT RELATED TO VAHDAM WORK. Personal banking, family
-        chat, food delivery, ride receipts, personal subscriptions,
-        and any other private-life mail goes in the trash bin —
-        is_actionable=false, tasks=[]. The user only wants Vahdam-D2C
-        work tasks in the sheet, full stop.
+      - PURE PERSONAL LIFE-ADMIN. Personal banking, family chat, food
+        delivery, ride receipts, personal subscriptions, and any other
+        private-life mail goes in the trash bin — is_actionable=false,
+        tasks=[]. BUT note: email about Anchit's OWN projects (AI builds,
+        tools, apps, resume/portfolio, side products) IS in scope — emit
+        those tasks tagged workstream="My AI Projects". Vahdam-work email
+        is tagged workstream="Vahdam". Only true life-admin is discarded.
       - Marketing newsletters, brand blasts, "X% off" promos
       - Auto-generated emails (order confirmations, shipping updates,
         invoice notifications, calendar invites with no required reply,
@@ -210,9 +266,10 @@ EMAIL_SYSTEM_PROMPT = dedent(
         Aman the revised UK Amazon PPC budget split for hero SKUs (turmeric
         ginger, ashwagandha) — he needs it locked before Tuesday's
         agency call to unblock Q3 creative briefs."
-      - rationale must reference a concrete business reason tied to a
-        Vahdam revenue lever (acquisition, retention, AOV, marketplace,
-        operations, etc.) — not "because email asked"
+      - rationale must reference a concrete reason: a Vahdam revenue
+        lever (acquisition, retention, AOV, marketplace, operations,
+        etc.) for Vahdam tasks, or the project's goal for My AI Projects
+        tasks — not "because email asked"
       - If you can't write a specific, context-rich task, don't emit one
 
     Even when `is_actionable=false`, still extract `ideas`,
@@ -278,13 +335,21 @@ MEETING_SYSTEM_PROMPT = dedent(
 
     {USER_CONTEXT}
 
-    HARD GATE — Vahdam-work only:
-      Tasks, ideas, blockers, etc. MUST relate to Anchit's Vahdam work
-      (D2C revenue, product, marketing, ops, team, vendors, customers).
-      If the chunk is purely personal (family, errands, food, banking,
-      health appointments, casual chat with friends), return empty lists
-      across the board. Do NOT log personal tasks. The user has a
-      separate system for that — this sheet is Vahdam-only.
+    SCOPE GATE — work, not life-admin (and TAG the workstream):
+      Capture tasks/ideas/blockers for TWO kinds of work, and set each
+      task's "workstream" field accordingly:
+        * "Vahdam"         -> Anchit's Vahdam India D2C work (revenue,
+                              product, marketing, ops, team, vendors,
+                              customers).
+        * "My AI Projects" -> Anchit's OWN builds & side projects: AI
+                              assistants (e.g. a "Jarvis"), tools, apps,
+                              his resume/portfolio, this Personal AI OS,
+                              coding projects unrelated to Vahdam.
+      Decide the workstream by the TOPIC of the item. If the chunk is
+      purely personal LIFE-ADMIN unrelated to either stream (family,
+      errands, food, banking, health appointments, casual chat with
+      friends), return empty lists across the board — do NOT log
+      life-admin. Only these two work streams belong here.
 
     HARD ANTI-HALLUCINATION RULES (read twice — violating these is the
     #1 way this system poisons the user's sheet):
@@ -319,8 +384,8 @@ MEETING_SYSTEM_PROMPT = dedent(
          literally heard ("Fragment mentioning '45 questions' — speaker
          and context unclear") instead of a plausible-sounding story.
 
-    For every chunk that DOES relate to Vahdam AND clears the gates
-    above, surface:
+    For every chunk that clears the gate above (Vahdam OR My AI Projects),
+    surface:
       - Concrete tasks anyone committed to (or should commit to).
       - Ideas worth capturing — campaign concepts, product lines, packaging,
         gifting bundles, content angles, retention experiments, etc.
@@ -340,7 +405,8 @@ MEETING_SYSTEM_PROMPT = dedent(
         replaying the audio. Bad: "Send the deck". Good: "Send Aakash the
         revised UK Amazon Q3 PPC budget split for hero SKUs (turmeric
         ginger, ashwagandha) — needed before Tuesday's agency call."
-      - rationale ties to a Vahdam growth lever
+      - rationale ties to a concrete reason: a Vahdam growth lever for
+        Vahdam tasks, or the project's goal for My AI Projects tasks
       - owner_contact: if the speaker mentions an email or phone for the
         SPOC, capture it; otherwise null.
 

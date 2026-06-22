@@ -43,6 +43,12 @@
   .chip{background:var(--panel);border:1px solid var(--line);color:var(--dim);border-radius:99px;padding:6px 12px;
     font-size:12px;font-weight:600;cursor:pointer;user-select:none}
   .chip.on{background:rgba(99,102,241,.16);border-color:var(--accent);color:#c7ccff}
+  .wstabs{display:flex;gap:4px;padding:10px clamp(12px,3vw,26px) 0}
+  .wstab{background:transparent;border:none;border-bottom:2px solid transparent;color:var(--mute);
+    font-size:14px;font-weight:700;cursor:pointer;padding:8px 16px 10px;user-select:none}
+  .wstab:hover{color:var(--dim)}
+  .wstab.on{color:#fff;border-bottom-color:var(--accent)}
+  .wstab .wscount{font-size:11px;color:var(--mute);font-weight:600;margin-left:6px}
   .meta{padding:9px clamp(12px,3vw,26px) 0;font-size:12px;color:var(--mute)}
   .board{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:13px;padding:13px clamp(12px,3vw,26px) 44px;align-items:start}
   @media(max-width:1180px){.board{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -126,6 +132,7 @@
     <button class="btn" id="exportBtn">⬇ Export</button>
     <button class="btn primary" id="addBtn">＋ Add task</button>
   </div>
+  <div class="wstabs" id="wsTabs"></div>
   <div class="tools">
     <span class="lbl">Source</span><span id="srcFilters"></span>
     <span class="lbl" style="margin-left:8px">Assignee</span><span id="asgFilters"></span>
@@ -152,6 +159,8 @@ const URANK = {Critical:0,High:1,Medium:2,Low:3};
 const AVA_COLORS = ["#6366f1","#22c55e","#f59e0b","#ef4444","#a855f7","#06b6d4","#ec4899","#84cc16"];
 let TASKS = [];
 let activeSrc="All", activeAsg="All", query="", sortBy="created";
+const WORKSTREAMS=["Vahdam","My AI Projects"];
+let activeWs="Vahdam";
 
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -184,12 +193,16 @@ async function boot(){
 function clean(t){
   return {id:t.id||uid(),source_type:t.source_type||"",source_link:t.source_link||"",
     task:t.task||"",task_description:t.task_description||"",rationale:t.rationale||"",
-    growth_pillar:t.growth_pillar||"",deadline:t.deadline||"",urgency:normUrg(t.urgency),
+    growth_pillar:t.growth_pillar||"",workstream:normWs(t.workstream),deadline:t.deadline||"",urgency:normUrg(t.urgency),
     assignee:t.assignee||t.spoc||"",summary:t.summary||"",status:normStatus(t.status),created_at:t.created_at||new Date().toISOString()};
 }
 const sources=()=>["All",...Array.from(new Set(TASKS.map(t=>t.source_type).filter(Boolean)))];
 const assignees=()=>["All",...Array.from(new Set(TASKS.map(t=>t.assignee).filter(Boolean)))];
+function normWs(w){w=String(w||"").trim();const s=w.toLowerCase();
+  if(s.includes("ai project")||s.includes("my ai")||s.includes("personal")||s.includes("jarvis"))return "My AI Projects";
+  return "Vahdam";}
 function matches(t){
+  if(normWs(t.workstream)!==activeWs)return false;
   if(activeSrc!=="All"&&t.source_type!==activeSrc)return false;
   if(activeAsg!=="All"&&t.assignee!==activeAsg)return false;
   if(query){const h=[t.task,t.task_description,t.summary,t.assignee,t.growth_pillar].join(" ").toLowerCase();if(!h.includes(query))return false;}
@@ -204,6 +217,10 @@ function sortTasks(a,b){
 }
 
 function render(){
+  $("#wsTabs").innerHTML=WORKSTREAMS.map(w=>{
+    const n=TASKS.filter(t=>normWs(t.workstream)===w).length;
+    return `<button class="wstab ${w===activeWs?'on':''}" data-ws="${esc(w)}">${esc(w)}<span class="wscount">${n}</span></button>`;
+  }).join("");
   $("#srcFilters").innerHTML=sources().map(s=>`<span class="chip ${s===activeSrc?'on':''}" data-f="src" data-v="${esc(s)}">${esc(s)}</span>`).join("");
   $("#asgFilters").innerHTML=assignees().map(s=>`<span class="chip ${s===activeAsg?'on':''}" data-f="asg" data-v="${esc(s)}">${esc(s==="All"?"All":(s||"Unassigned"))}</span>`).join("");
 
@@ -343,6 +360,8 @@ $("#q").oninput=e=>{query=e.target.value.trim().toLowerCase();render();};
 $("#sortSel").onchange=e=>{sortBy=e.target.value;render();};
 document.addEventListener("click",e=>{const c=e.target.closest(".chip");if(!c)return;
   if(c.dataset.f==="src")activeSrc=c.dataset.v;else if(c.dataset.f==="asg")activeAsg=c.dataset.v;render();});
+document.addEventListener("click",e=>{const w=e.target.closest(".wstab");if(!w)return;
+  activeWs=w.dataset.ws;activeSrc="All";activeAsg="All";render();});
 
 boot();
 </script>

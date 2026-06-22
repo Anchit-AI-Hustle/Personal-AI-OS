@@ -236,6 +236,23 @@ class MeetingService:
                 transcript_path=transcript_path,
             )
 
+        # 5b. Day-wise activity log — only when the chunk produced real work
+        #     content (tasks are already gated to Vahdam / My AI Projects, so
+        #     life-admin never reaches here). Workstream follows the tasks.
+        if extraction and extraction.tasks and summary:
+            try:
+                ws = extraction.tasks[0].workstream
+                self._db.log_activity(
+                    text=summary,
+                    workstream=ws,
+                    kind="voice",
+                    source_type="Meeting",
+                    source_ref=f"{chunk.session_id}#{chunk.chunk_index}",
+                    ts=chunk.started_at,
+                )
+            except Exception:
+                logger.exception("Could not log activity for chunk %d", chunk.chunk_index)
+
         logger.info(
             "Chunk %d/%s processed: %d task(s), %d idea(s), %d blocker(s)",
             chunk.chunk_index,

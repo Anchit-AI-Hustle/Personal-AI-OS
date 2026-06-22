@@ -107,11 +107,13 @@ class PersonalAIOS:
         enable_email: bool,
         enable_meetings: bool,
         enable_chat: bool,
+        enable_sheets: bool = True,
     ) -> None:
         self.stop_event = threading.Event()
         self._enable_email = enable_email
         self._enable_meetings = enable_meetings
         self._enable_chat = enable_chat
+        self._enable_sheets = enable_sheets
         self._gmail_poller: Optional[GmailPoller] = None
         self._chat_poller: Optional[ChatPoller] = None
         self._sheets_worker: Optional[SheetsSyncWorker] = None
@@ -155,7 +157,12 @@ class PersonalAIOS:
             or (self._enable_meetings and settings.enable_meeting_capture)
             or (self._enable_chat and settings.enable_chat_poller)
         )
-        if any_producer:
+        if any_producer and not self._enable_sheets:
+            logger.info(
+                "Sheets sync disabled by --no-sheets (local-only mode): tasks are "
+                "saved to the local DB + tasks.xlsx but not pushed to Google Sheets."
+            )
+        if any_producer and self._enable_sheets:
             self._sheets_worker = SheetsSyncWorker(stop_event=self.stop_event)
             self._sheets_worker.start()
             # Reverse sync only makes sense when forward sync is on —
@@ -235,6 +242,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--no-meetings", action="store_true", help="disable audio capture")
     p.add_argument("--no-chat", action="store_true", help="disable Google Chat polling")
     p.add_argument(
+        "--no-sheets",
+        action="store_true",
+        help="local-only mode: record + transcribe + extract to the local DB/xlsx "
+        "without pushing to Google Sheets (no Google login required)",
+    )
+    p.add_argument(
         "--reset-initial-scan",
         action="store_true",
         help="Delete the initial-scan sentinel so the historical sweep runs again on this boot.",
@@ -257,6 +270,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         enable_email=not args.no_email,
         enable_meetings=not args.no_meetings,
         enable_chat=not args.no_chat,
+        enable_sheets=not args.no_sheets,
     )
     _install_signal_handlers(app)
 

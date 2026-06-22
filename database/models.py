@@ -11,6 +11,11 @@ from typing import Optional
 URGENCY_VALUES = ("Low", "Medium", "High", "Critical")
 SOURCE_TYPES = ("Email", "Meeting", "Conversation")
 
+# The two workstreams every task is routed into (separate sheet tabs +
+# dashboard tabs). Keep aligned with ai/prompts.py:WORKSTREAMS_LIST.
+WORKSTREAMS = ("Vahdam", "My AI Projects")
+DEFAULT_WORKSTREAM = "Vahdam"
+
 # Keep aligned with ai/prompts.py:GROWTH_PILLARS_LIST.
 GROWTH_PILLARS = (
     "Acquisition",
@@ -45,6 +50,29 @@ def normalise_urgency(raw: Optional[str]) -> str:
         "p3": "Low",
     }
     return table.get(s, "Medium")
+
+
+def normalise_workstream(raw: Optional[str]) -> str:
+    """Snap whatever the LLM returned to one of the two known workstreams.
+
+    Defaults to Vahdam — the historical scope — so legacy rows and any
+    ambiguous output keep their old behaviour.
+    """
+    if not raw:
+        return DEFAULT_WORKSTREAM
+    s = raw.strip().lower()
+    # Anything clearly about Anchit's own builds/side-projects.
+    ai_markers = ("ai project", "my ai", "personal", "side project", "jarvis",
+                  "resume", "portfolio", "personal ai os", "own project")
+    if any(m in s for m in ai_markers):
+        return "My AI Projects"
+    if "vahdam" in s:
+        return "Vahdam"
+    # Exact match on a known value, else default.
+    for w in WORKSTREAMS:
+        if w.lower() == s:
+            return w
+    return DEFAULT_WORKSTREAM
 
 
 def normalise_growth_pillar(raw: Optional[str]) -> str:
@@ -112,6 +140,10 @@ class ExtractedTask:
     # One of GROWTH_PILLARS — "Growth Pillar" column.
     growth_pillar: str = "Other"
 
+    # One of WORKSTREAMS — decides which sheet tab + dashboard tab this
+    # task lands in ("Vahdam" vs "My AI Projects").
+    workstream: str = DEFAULT_WORKSTREAM
+
     # Existing fields, repurposed.
     urgency: str = "Medium"           # -> "Priority" column
     deadline: Optional[str] = None    # -> "Task Deadline" column
@@ -131,6 +163,7 @@ class ExtractedTask:
         self.rationale = (self.rationale or "").strip()
         self.urgency = normalise_urgency(self.urgency)
         self.growth_pillar = normalise_growth_pillar(self.growth_pillar)
+        self.workstream = normalise_workstream(self.workstream)
 
     @property
     def task(self) -> str:

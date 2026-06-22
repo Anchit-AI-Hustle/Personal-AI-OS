@@ -17,6 +17,7 @@ from database.models import (
     MeetingChunkExtraction,
     normalise_growth_pillar,
     normalise_urgency,
+    normalise_workstream,
 )
 from utils.logger import get_logger
 
@@ -86,11 +87,17 @@ def _coerce_task(raw: dict[str, Any], default_speaker: Optional[str] = None) -> 
         or _safe_str(raw.get("spoc_contact"))
         or _safe_str(raw.get("contact"))
     )
+    workstream = (
+        _safe_str(raw.get("workstream"))
+        or _safe_str(raw.get("stream"))
+        or _safe_str(raw.get("bucket"))
+    )
     return ExtractedTask(
         task_heading=heading,
         task_description=description,
         rationale=rationale,
         growth_pillar=normalise_growth_pillar(pillar),
+        workstream=normalise_workstream(workstream),
         urgency=normalise_urgency(_safe_str(raw.get("urgency"))),
         deadline=_safe_str(raw.get("deadline")),
         sender_or_speaker=speaker,

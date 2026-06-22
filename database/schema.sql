@@ -136,3 +136,20 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
     insights_json TEXT,
     created_at  TEXT NOT NULL
 );
+
+-- Day-wise activity log: what the user was doing during the day.
+-- Only work content (Vahdam or My AI Projects) is logged — never life-admin.
+-- Fed by the voice/meeting pipeline (and later by check-ins / notes).
+CREATE TABLE IF NOT EXISTS activity_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,          -- ISO 8601 UTC timestamp
+    day         TEXT NOT NULL,          -- local YYYY-MM-DD for grouping
+    workstream  TEXT,                   -- "Vahdam" | "My AI Projects"
+    kind        TEXT,                   -- "voice" | "note" | "checkin"
+    text        TEXT NOT NULL,          -- what happened (chunk summary / note)
+    source_type TEXT,                   -- "Meeting" | "Manual" | ...
+    source_ref  TEXT,                   -- session/chunk id or note id
+    created_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_day ON activity_log(day);
