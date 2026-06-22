@@ -610,8 +610,9 @@ class Database:
     ) -> int:
         """Record one day-wise activity entry (what the user was doing)."""
         now = ts or _utcnow()
-        # `day` groups by local calendar date; caller may pass it explicitly.
-        the_day = day or now[:10]
+        # `day` groups by LOCAL calendar date (not UTC) so entries land on the
+        # right day for the user's timezone (e.g. IST). ts itself stays UTC.
+        the_day = day or datetime.now().strftime("%Y-%m-%d")
         with self.connection() as conn:
             cur = conn.execute(
                 """

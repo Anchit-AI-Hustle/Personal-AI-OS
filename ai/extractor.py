@@ -256,6 +256,40 @@ class Extractor:
         explanation = _safe_str(obj.get("explanation")) or ""
         return {"accuracy": acc, "explanation": explanation}
 
+    # --- voice command detection ---------------------------------------------
+
+    def detect_command(self, *, transcript: str) -> Optional[dict[str, Any]]:
+        """Decide whether a transcript snippet is a direct instruction to the
+        assistant, and classify it. Returns a dict (see COMMAND_SYSTEM_PROMPT)
+        or None on empty input / parse failure / not-an-instruction.
+
+        External-storage intents are flagged needs_confirmation=True so the
+        caller gates them behind explicit user consent (voice "yes" / touch).
+        """
+        text = (transcript or "").strip()
+        if not text:
+            return None
+        try:
+            raw = self.client.complete(
+                system=prompts.COMMAND_SYSTEM_PROMPT,
+                user=prompts.build_command_user_prompt(transcript=text),
+                max_tokens=400,
+                temperature=0.0,
+            )
+            obj = _parse_json_block(raw)
+        except Exception:
+            logger.exception("LLM call failed during command detection.")
+            return None
+
+        if not bool(obj.get("is_instruction")):
+            return None
+        # Safety net: any external write is forced to require confirmation,
+        # regardless of what the model returned.
+        external = bool(obj.get("stores_data_externally"))
+        if external:
+            obj["needs_confirmation"] = True
+        return obj
+
     # --- daily summary -------------------------------------------------------
 
     def daily_summary(self, *, date_str: str, payload: str) -> dict[str, Any]:

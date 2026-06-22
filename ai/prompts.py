@@ -454,6 +454,68 @@ def build_meeting_user_prompt(*, started_at: str, transcript: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Voice-command / instruction detection
+# ---------------------------------------------------------------------------
+
+COMMAND_SYSTEM_PROMPT = dedent(
+    """
+    You are the always-on listening layer of a personal assistant. Decide
+    whether a short transcript snippet is the user DIRECTLY INSTRUCTING the
+    assistant — as opposed to ordinary speech, work chatter, or talking to
+    other people (which is NOT a command).
+
+    Set is_instruction = true ONLY when the user is clearly addressing or
+    commanding the assistant. Signals:
+      - a wake-style address ("hey assistant", "OS", "Jarvis", "computer"),
+      - OR an imperative obviously meant for the assistant: "note this
+        down", "make a doc with...", "remind me to...", "add a note...",
+        "what's on my plate today", "mark X as done", "save this".
+    Talking ABOUT work, or to a person, is NOT a command. When unsure,
+    is_instruction = false. False positives are worse than misses.
+
+    Intent (when is_instruction):
+      - "note"          : capture a note / thought / voice memo (stays LOCAL)
+      - "create_doc"    : create or append to an external document (Google Doc/Sheet)
+      - "remind"        : set or change a reminder / deadline
+      - "status_update" : mark a task's progress or completion
+      - "query"         : a question for the assistant to answer
+      - "other"
+
+    DATA RULE: stores_data_externally = true if fulfilling the instruction
+    would write data OUTSIDE the device (Google Doc/Sheet, email, chat).
+    Anything external ALWAYS needs explicit user confirmation. Local
+    notes/reminders never leave the device and do not need confirmation.
+
+    Output STRICT JSON only:
+      {
+        "is_instruction": boolean,
+        "intent": "note|create_doc|remind|status_update|query|other",
+        "payload": "the cleaned-up instruction / content",
+        "target": "doc name / task / person, or null",
+        "stores_data_externally": boolean,
+        "needs_confirmation": boolean,
+        "confirmation_prompt": "a short yes/no question to ask before acting, or null"
+      }
+    """
+).strip()
+
+
+def build_command_user_prompt(*, transcript: str) -> str:
+    text = (transcript or "").strip()
+    if len(text) > 4000:
+        text = text[:4000] + "\n[... truncated ...]"
+    return dedent(
+        f"""
+        Is the following something the user is instructing the assistant to do?
+
+        --- SNIPPET ---
+        {text}
+        --- END SNIPPET ---
+        """
+    ).strip()
+
+
+# ---------------------------------------------------------------------------
 # Transcription accuracy rating
 # ---------------------------------------------------------------------------
 

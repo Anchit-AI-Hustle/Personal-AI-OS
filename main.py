@@ -92,7 +92,13 @@ from chat import ChatPoller  # noqa: E402
 from database import get_db  # noqa: E402
 from gmail import GmailPoller  # noqa: E402
 from meetings import MeetingPipeline  # noqa: E402
-from services import ChatService, DailySummaryWorker, EmailService  # noqa: E402
+from services import (  # noqa: E402
+    ChatService,
+    DailyPlanWorker,
+    DailySummaryWorker,
+    EmailService,
+    ReminderWorker,
+)
 from sheets import ReverseSyncWorker, SheetsSyncWorker  # noqa: E402
 from utils.logger import get_logger, setup_logging  # noqa: E402
 
@@ -120,6 +126,8 @@ class PersonalAIOS:
         self._reverse_sync: Optional[ReverseSyncWorker] = None
         self._meeting_pipeline: Optional[MeetingPipeline] = None
         self._daily_worker: Optional[DailySummaryWorker] = None
+        self._plan_worker: Optional[DailyPlanWorker] = None
+        self._reminder_worker: Optional[ReminderWorker] = None
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -183,6 +191,15 @@ class PersonalAIOS:
         )
         self._daily_worker.start()
 
+        # Reminder + morning daily-plan engine. Local-first: they log to the
+        # activity trail with no Google needed, and email when connected.
+        self._reminder_worker = ReminderWorker(stop_event=self.stop_event)
+        self._reminder_worker.start()
+        self._plan_worker = DailyPlanWorker(
+            stop_event=self.stop_event, hour=settings.daily_plan_hour
+        )
+        self._plan_worker.start()
+
         logger.info("Personal AI OS is up. Press Ctrl+C to stop.")
 
     def wait(self) -> None:
@@ -208,6 +225,8 @@ class PersonalAIOS:
             self._sheets_worker,
             self._reverse_sync,
             self._daily_worker,
+            self._reminder_worker,
+            self._plan_worker,
         ):
             if worker is not None and worker.is_alive():
                 worker.join(timeout=10.0)

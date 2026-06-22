@@ -139,6 +139,9 @@ class Settings:
     # Daily summary
     daily_summary_hour: int
 
+    # Morning daily-plan ("what to do today") hour, local time.
+    daily_plan_hour: int
+
     # OAuth account binding
     expected_google_account: Optional[str]
     oauth_chrome_profile: Optional[str]
@@ -272,6 +275,7 @@ def _load() -> Settings:
         google_token_path=_resolve_path(_env("GOOGLE_TOKEN_PATH"), "./token.json"),
         log_level=(_env("LOG_LEVEL", "INFO") or "INFO").upper(),
         daily_summary_hour=_env_int("DAILY_SUMMARY_HOUR", 21),
+        daily_plan_hour=_env_int("DAILY_PLAN_HOUR", 8),
         expected_google_account=_env("EXPECTED_GOOGLE_ACCOUNT"),
         oauth_chrome_profile=_env("OAUTH_CHROME_PROFILE"),
         self_chat_user_id=_env("SELF_CHAT_USER_ID"),

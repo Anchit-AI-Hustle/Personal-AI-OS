@@ -253,6 +253,22 @@ class MeetingService:
             except Exception:
                 logger.exception("Could not log activity for chunk %d", chunk.chunk_index)
 
+        # 5c. Voice-command hook — detect when the user is directly instructing
+        #     the assistant (vs. ambient talk). Local intents are logged and act
+        #     on-device; anything that would write OFF-device is recorded as
+        #     PENDING explicit consent and takes no action here. Fully guarded:
+        #     command detection must never break capture/transcription.
+        try:
+            cmd = self._extractor.detect_command(transcript=transcription.text)
+        except Exception:
+            logger.exception("Command detection failed for chunk %d", chunk.chunk_index)
+            cmd = None
+        if cmd:
+            try:
+                self._handle_command(cmd, chunk)
+            except Exception:
+                logger.exception("Command handling failed for chunk %d", chunk.chunk_index)
+
         logger.info(
             "Chunk %d/%s processed: %d task(s), %d idea(s), %d blocker(s)",
             chunk.chunk_index,
@@ -261,6 +277,27 @@ class MeetingService:
             len(extraction.ideas) if extraction else 0,
             len(extraction.blockers) if extraction else 0,
         )
+
+    def _handle_command(self, cmd: dict, chunk) -> None:
+        """Route a detected instruction. External writes are NEVER executed
+        here — they are logged as awaiting explicit user consent (voice/touch),
+        honouring local-first + consent-gated egress."""
+        intent = (cmd.get("intent") or "other").strip()
+        payload = (cmd.get("payload") or "").strip()
+        ref = f"{chunk.session_id}#{chunk.chunk_index}"
+        if cmd.get("needs_confirmation") or cmd.get("stores_data_externally"):
+            note = (
+                f"[awaiting consent] {intent}: {payload}"
+                + (f" — {cmd.get('confirmation_prompt')}" if cmd.get("confirmation_prompt") else "")
+            )
+            self._db.log_activity(text=note, kind="command_pending",
+                                  source_type="Command", source_ref=ref)
+            logger.info("Command '%s' needs consent; logged as pending (no egress).", intent)
+            return
+        # Local-only intents act immediately and stay on-device.
+        self._db.log_activity(text=f"[{intent}] {payload}", kind="command",
+                              source_type="Command", source_ref=ref)
+        logger.info("Local command '%s' captured on-device.", intent)
 
     # --- session finalisation -----------------------------------------------
 

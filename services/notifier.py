@@ -204,6 +204,50 @@ class GmailNotifier:
             logger.exception("Gmail send failed unexpectedly.")
         return False
 
+    def send_email(
+        self,
+        *,
+        subject: str,
+        text_body: str,
+        html_body: Optional[str] = None,
+        recipient: Optional[str] = None,
+    ) -> bool:
+        """Generic one-off email (daily plan, reminder). Never raises;
+        returns False on any handled failure (disabled, no recipient, auth/quota
+        — e.g. when credentials.json isn't connected yet)."""
+        if not settings.enable_notifications:
+            logger.debug("Notifications disabled; skipping email %r.", subject)
+            return False
+        to_addr = (recipient or settings.notification_recipient or "").strip()
+        if not to_addr:
+            logger.warning("No NOTIFICATION_RECIPIENT configured; skipping %r.", subject)
+            return False
+        body = _build_message(
+            sender="me",
+            recipient=to_addr,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body or f"<pre style=\"font-family:-apple-system,Segoe UI,sans-serif;"
+                                   f"font-size:14px;white-space:pre-wrap\">{escape(text_body)}</pre>",
+        )
+        try:
+            def _call() -> dict:
+                return (
+                    self._service().users().messages()
+                    .send(userId="me", body=body).execute()
+                )
+            resp = retry_call(_call, attempts=3, exceptions=(HttpError, TimeoutError))
+            logger.info("Sent email %r to %s (id=%s).", subject, to_addr, (resp or {}).get("id"))
+            return True
+        except FileNotFoundError:
+            # No credentials.json yet — expected in local-first mode. Stay quiet.
+            logger.debug("Skipping email %r — Google credentials not connected.", subject)
+        except HttpError as exc:
+            logger.warning("Gmail send failed (HTTP) for %r: %s", subject, exc)
+        except Exception:
+            logger.exception("Gmail send failed unexpectedly for %r.", subject)
+        return False
+
 
 _singleton: Optional[GmailNotifier] = None
 _singleton_lock = threading.Lock()

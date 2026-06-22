@@ -102,7 +102,9 @@
       "Bash(pkill -f \"auth application-default login\")",
       "Bash(pkill -f \"sleep 1200\")",
       "Bash(.venv/bin/python -c \"import json;d=json.load\\(open\\('web/data.json'\\)\\);print\\('count:',d['count'],'from:',d['generated_from']\\)\")",
-      "Bash(git commit -q -m ' *)"
+      "Bash(git commit -q -m ' *)",
+      "Bash(gh pr edit 8 --title 'Add workstream split, activity log, dashboard tabs, and local-only mode' --body ' *)",
+      "Bash(gh pr *)"
     ]
   },
   "enableAllProjectMcpServers": true,
